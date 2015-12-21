@@ -3,7 +3,8 @@ from setuptools import setup
 
 install_requires = [
     'fusepy',
-    'gmusicapi'
+    'gmusicapi',
+    'oauth2client'
 ]
 
 # pip install https://github.com/terencehonles/fusepy/tarball/master

@@ -23,6 +23,9 @@ from gmusicapi import Webclient as GoogleMusicWebAPI
 
 import fifo
 
+reload(sys) # Reload does the trick
+sys.setdefaultencoding('UTF-8')
+
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger('gmusicfs')
 deviceId = None
@@ -260,7 +263,7 @@ class MusicLibrary(object):
 
         self.api = GoogleMusicAPI(debug_logging=self.verbose)
         log.info('Logging in...')
-        self.api.login(username, password)
+        self.api.login(username, password, deviceId)
         log.info('Login successful.')
 
     def __aggregate_albums(self):
@@ -482,7 +485,7 @@ class GMusicFS(LoggingMixIn, Operations):
             track = album.get_track(parts['track'])
             # Genre tag is always set to Other as Google MP3 genre tags are not id3v1 id.
             id3v1 = struct.pack("!3s30s30s30s4s30sb", 'TAG', str(track['title']), str(track['artist']),
-        	str(track['album']), str(0), str(track['comment']), 12)
+        	                str(track.get('album','')), str(0), str(track.get('comment','')), 12)
             buf = u.read(size - ID3V1_TRAILER_SIZE) + id3v1
         else:
             buf = u.read(size)

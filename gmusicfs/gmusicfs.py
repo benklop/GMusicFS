@@ -69,6 +69,7 @@ class Playlist(object):
 
     def get_tracks(self, get_size=False):
         """Return the list of tracks, in order, that comprise the playlist"""
+
         # TODO Converge implementation by creating a Track class?
         #      It could get the size only on demand per-track
         # Retrieve and remember the filesize of each track:
@@ -83,6 +84,7 @@ class Playlist(object):
 
     def get_track(self, filename):
         """Return the track that corresponds to a filename from this playlist"""
+
         m = self.__filename_re.match(filename)
         if m:
             tracknum = int(m.groups()[0])
@@ -91,6 +93,7 @@ class Playlist(object):
 
     def get_track_stream(self, track):
         """Return the track stream URL"""
+
         return self.library.api.get_stream_url(track['id'], deviceId)
 
     def __repr__(self):
@@ -108,14 +111,17 @@ class Artist(object):
 
     def add_album(self, album):
         """Add an album to the artist"""
+
         self.__albums[album.normtitle.lower()] = album
 
     def get_albums(self):
         """Return a list of all the albums by the artist"""
+
         return self.__albums.values()
 
     def get_album(self, title):
         """Return a specific album from the set that belongs to the artist"""
+
         return self.__albums.get(title.lower(), None)
 
     def __repr__(self):
@@ -135,11 +141,13 @@ class Album(object):
 
     def add_track(self, track):
         """Add a track to the album"""
+
         self.__tracks.append(track)
         self.__sorted = False
 
     def get_tracks(self, get_size=False):
         """Return a sorted list of tracks in the album"""
+
         # Re-sort by track number
         if not self.__sorted:
             self.__tracks.sort(key=lambda t: t.get('track'))
@@ -156,6 +164,7 @@ class Album(object):
     def get_track(self, filename):
         """Get the track name corresponding to a filename
         (eg. '001 - brilliant track name.mp3')"""
+
         m = self.__filename_re.match(filename)
         if m:
             title = m.groups()[0]
@@ -166,10 +175,12 @@ class Album(object):
 
     def get_track_stream(self, track):
         """Return the track stream URL"""
+
         return self.library.api.get_stream_url(track['id'], deviceId)
 
     def get_cover_url(self):
         """Return the album cover image URL"""
+
         try:
             # Assume the first track has the right cover URL
             url = "%s" % self.__tracks[0]['albumArtRef'][0]['url']
@@ -179,6 +190,7 @@ class Album(object):
 
     def get_cover_size(self):
         """Return the album cover size"""
+
         if self.library.true_file_size:
             r = urllib2.Request(self.get_cover_url())
             r.get_method = lambda: 'HEAD'
@@ -190,6 +202,7 @@ class Album(object):
         """Get the year of the album.
         Aggregate all the track years and pick the most popular year
         among them"""
+
         years = {}  # year -> count
         for track in self.get_tracks():
             y = track.get('year', None)
@@ -347,13 +360,21 @@ class GMusicFS(LoggingMixIn, Operations):
                  true_file_size=False, verbose=0, scan_library=True,
                  lowercase=True):
         Operations.__init__(self)
-        self.artist_dir = re.compile('^/artists/(?P<artist>[^/]+)$')
-        self.artist_album_dir = re.compile(
-            '^/artists/(?P<artist>[^/]+)/(?P<year>[0-9]{4}) - (?P<album>[^/]+)$')
-        self.artist_album_track = re.compile(
-            '^/artists/(?P<artist>[^/]+)/(?P<year>[0-9]{4}) - (?P<album>[^/]+)/(?P<track>[^/]+\.mp3)$')
-        self.artist_album_image = re.compile(
-            '^/artists/(?P<artist>[^/]+)/(?P<year>[0-9]{4}) - (?P<album>[^/]+)/(?P<image>[^/]+\.jpg)$')
+
+        artist = '/artists/(?P<artist>[^/]+)'
+        album = '(?P<year>[0-9]{4}) - (?P<album>[^/]+)'
+        track = '(?P<track>[^/]+\.mp3)'
+        image = '(?P<image>[^/]+\.jpg)'
+
+        self.artist_dir = re.compile('^{artist}$'.format(
+            artist=artist))
+        self.artist_album_dir = re.compile('^{artist}/{album}$'.format(
+            artist=artist, album=album))
+        self.artist_album_track = re.compile('^{artist}/{album}/{track}$'.format(
+            artist=artist, album=album, track=track))
+        self.artist_album_image = re.compile('^{artist}/{album}/{image}$'.format(
+            artist=artist, album=album, image=image))
+
         self.playlist_dir = re.compile('^/playlists/(?P<playlist>[^/]+)$')
         self.playlist_track = re.compile(
             '^/playlists/(?P<playlist>[^/]+)/(?P<track>[^/]+\.mp3)$')
@@ -376,6 +397,7 @@ class GMusicFS(LoggingMixIn, Operations):
 
     def track_to_stat(self, track, st={}):
         """Construct and results stat information based on a track"""
+
         # TODO This could be moved into a Track class in the future
         st['st_mode'] = (S_IFREG | 0444)
         st['st_size'] = int(track['estimatedSize'])
@@ -390,6 +412,7 @@ class GMusicFS(LoggingMixIn, Operations):
 
     def getattr(self, path, fh=None):
         """Get information about a file or directory"""
+
         artist_dir_m = self.artist_dir.match(path)
         artist_album_dir_m = self.artist_album_dir.match(path)
         artist_album_track_m = self.artist_album_track.match(path)

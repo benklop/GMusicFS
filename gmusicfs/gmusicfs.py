@@ -179,12 +179,12 @@ class Album(object):
 
     def get_cover_size(self):
         """Return the album cover size"""
-    if self.library.true_file_size:
-        r = urllib2.Request(self.get_cover_url())
-        r.get_method = lambda: 'HEAD'
-        u = urllib2.urlopen(r)
-        return int(u.headers['Content-Length'])
-    return None
+        if self.library.true_file_size:
+            r = urllib2.Request(self.get_cover_url())
+            r.get_method = lambda: 'HEAD'
+            u = urllib2.urlopen(r)
+            return int(u.headers['Content-Length'])
+        return None
 
     def get_year(self):
         """Get the year of the album.

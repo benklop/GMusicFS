@@ -23,6 +23,9 @@ from gmusicapi import Webclient as GoogleMusicWebAPI
 
 import fifo
 
+reload(sys) # Reload does the trick
+sys.setdefaultencoding('UTF-8')
+
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger('gmusicfs')
 deviceId = None
@@ -80,7 +83,7 @@ class Playlist(object):
         """Return the track that corresponds to a filename from this playlist"""
         m = self.__filename_re.match(filename)
         if m:
-            tracknum = m.groups()[0]
+            tracknum = int(m.groups()[0])
             return self.__tracks[tracknum - 1]
         return None
 
@@ -140,7 +143,7 @@ class Album(object):
         if get_size and self.library.true_file_size:
             for t in self.__tracks:
                 if not 'bytes' in t:
-                    r = urllib2.Request(self.get_track_stream(t)[0])
+                    r = urllib2.Request(self.get_track_stream(t))
                     r.get_method = lambda: 'HEAD'
                     u = urllib2.urlopen(r)
                     t['bytes'] = int(u.headers['Content-Length']) + ID3V1_TRAILER_SIZE
@@ -370,7 +373,7 @@ class GMusicFS(LoggingMixIn, Operations):
         # TODO This could be moved into a Track class in the future
         st['st_mode'] = (S_IFREG | 0444)
         st['st_size'] = int(track['estimatedSize'])
-        if 'bytes' in t:
+        if 'bytes' in track:
             st['st_size'] = int(track['bytes'])
         st['st_ctime'] = st['st_mtime'] = st['st_atime'] = 0
         if 'creationTimestamp' in track:

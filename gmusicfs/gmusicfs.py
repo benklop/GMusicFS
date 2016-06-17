@@ -23,18 +23,19 @@ from gmusicapi import Webclient as GoogleMusicWebAPI
 
 import fifo
 
-reload(sys) # Reload does the trick
+reload(sys)  # Reload does the trick
 sys.setdefaultencoding('UTF-8')
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger('gmusicfs')
 deviceId = None
-pp = pprint.PrettyPrinter(indent=4) # For debug logging
+pp = pprint.PrettyPrinter(indent=4)  # For debug logging
 
 # Size of the ID3v1 trailer appended to the mp3 file (at read time)
 # Add the size to the reported size of the mp3 file so read function receive correct params.
 # The read function will read size bytes - 128 since we have to generate this 128 bytes.
 ID3V1_TRAILER_SIZE = 128
+
 
 def formatNames(string_from):
     """Format a name to make it suitable to use as a filename"""
@@ -43,6 +44,7 @@ def formatNames(string_from):
 
 class NoCredentialException(Exception):
     pass
+
 
 class Playlist(object):
     """This class manages playlist information"""
@@ -72,7 +74,7 @@ class Playlist(object):
         # Retrieve and remember the filesize of each track:
         if get_size and self.library.true_file_size:
             for t in self.__tracks:
-                if not 'bytes' in t:
+                if 'bytes' not in t:
                     r = urllib2.Request(self.get_track_stream(t)[0])
                     r.get_method = lambda: 'HEAD'
                     u = urllib2.urlopen(r)
@@ -93,6 +95,7 @@ class Playlist(object):
 
     def __repr__(self):
         return u'<Playlist \'{name}\'>'.format(name=self.realname)
+
 
 class Artist(object):
     """This class manages artist information"""
@@ -118,6 +121,7 @@ class Artist(object):
     def __repr__(self):
         return u'<Artist \'{name}\'>'.format(name=self.realname)
 
+
 class Album(object):
     """This class manages album information"""
 
@@ -142,7 +146,7 @@ class Album(object):
         # Retrieve and remember the filesize of each track
         if get_size and self.library.true_file_size:
             for t in self.__tracks:
-                if not 'bytes' in t:
+                if 'bytes' not in t:
                     r = urllib2.Request(self.get_track_stream(t))
                     r.get_method = lambda: 'HEAD'
                     u = urllib2.urlopen(r)
@@ -172,21 +176,21 @@ class Album(object):
         except:
             url = None
         return url
-        
+
     def get_cover_size(self):
         """Return the album cover size"""
-	if self.library.true_file_size:
-	    r = urllib2.Request(self.get_cover_url())
-	    r.get_method = lambda: 'HEAD'
-	    u = urllib2.urlopen(r)
-	    return int(u.headers['Content-Length'])
-	return None
-	    
+    if self.library.true_file_size:
+        r = urllib2.Request(self.get_cover_url())
+        r.get_method = lambda: 'HEAD'
+        u = urllib2.urlopen(r)
+        return int(u.headers['Content-Length'])
+    return None
+
     def get_year(self):
         """Get the year of the album.
         Aggregate all the track years and pick the most popular year
         among them"""
-        years = {} # year -> count
+        years = {}  # year -> count
         for track in self.get_tracks():
             y = track.get('year', None)
             if y:
@@ -203,6 +207,7 @@ class Album(object):
     def __repr__(self):
         return u'<Album \'{title}\'>'.format(title=self.normtitle)
 
+
 class MusicLibrary(object):
     """This class reads information about your Google Play Music library"""
 
@@ -214,8 +219,8 @@ class MusicLibrary(object):
 
         self.__login_and_setup(username, password)
 
-        self.__artists = {} # 'artist name' -> {'album name' : Album(), ...}
-        self.__albums = [] # [Album(), ...]
+        self.__artists = {}  # 'artist name' -> {'album name' : Album(), ...}
+        self.__albums = []  # [Album(), ...]
         self.__tracks = {}
         self.__playlists = {}
         if scan:
@@ -224,8 +229,8 @@ class MusicLibrary(object):
 
     def rescan(self):
         """Scan the Google Play Music library"""
-        self.__artists = {} # 'artist name' -> {'album name' : Album(), ...}
-        self.__albums = [] # [Album(), ...]
+        self.__artists = {}  # 'artist name' -> {'album name' : Album(), ...}
+        self.__albums = []  # [Album(), ...]
         self.__tracks = {}
         self.__playlists = {}
         self.__aggregate_albums()
@@ -246,10 +251,10 @@ class MusicLibrary(object):
                     'chmod 600 %s' % cred_path)
             self.config = ConfigParser.ConfigParser()
             self.config.read(cred_path)
-            username = self.config.get('credentials','username')
-            password = self.config.get('credentials','password')
+            username = self.config.get('credentials', 'username')
+            password = self.config.get('credentials', 'password')
             global deviceId
-            deviceId = self.config.get('credentials','deviceId')
+            deviceId = self.config.get('credentials', 'deviceId')
             if not username or not password:
                 raise NoCredentialException(
                     'No username/password could be read from config file'
@@ -290,7 +295,7 @@ class MusicLibrary(object):
             album = artist.get_album(formatNames(track['album']))
             if not album:
                 album = Album(self, track['album'])
-                self.__albums.append(album) # NOTE: Current no purpose other than to count
+                self.__albums.append(album)  # NOTE: Current no purpose other than to count
                 artist.add_album(album)
 
             # Add track to album
@@ -334,6 +339,7 @@ class MusicLibrary(object):
     def cleanup(self):
         pass
 
+
 class GMusicFS(LoggingMixIn, Operations):
     """Google Music Filesystem"""
 
@@ -352,7 +358,7 @@ class GMusicFS(LoggingMixIn, Operations):
         self.playlist_track = re.compile(
             '^/playlists/(?P<playlist>[^/]+)/(?P<track>[^/]+\.mp3)$')
 
-        self.__open_files = {} # path -> urllib2_obj
+        self.__open_files = {}  # path -> urllib2_obj
 
         # Define transformation based on whether lowercase filenames will be used or not
         if lowercase:
@@ -368,7 +374,7 @@ class GMusicFS(LoggingMixIn, Operations):
     def cleanup(self):
         self.library.cleanup()
 
-    def track_to_stat(self, track, st = {}):
+    def track_to_stat(self, track, st={}):
         """Construct and results stat information based on a track"""
         # TODO This could be moved into a Track class in the future
         st['st_mode'] = (S_IFREG | 0444)
@@ -393,9 +399,9 @@ class GMusicFS(LoggingMixIn, Operations):
 
         # Default to a directory
         st = {
-            'st_mode' : (S_IFDIR | 0755),
-            'st_nlink' : 2 }
-        date = 0 # Make the date really old, so that cp -u works correctly.
+            'st_mode': (S_IFDIR | 0755),
+            'st_nlink': 2}
+        date = 0  # Make the date really old, so that cp -u works correctly.
         st['st_ctime'] = st['st_mtime'] = st['st_atime'] = date
 
         if path == '/':
@@ -420,10 +426,10 @@ class GMusicFS(LoggingMixIn, Operations):
             album = artist.get_album(parts['album'])
             cover_size = album.get_cover_size()
             if cover_size is None:
-            	cover_size = 10000000
+                cover_size = 10000000
             st = {
-                'st_mode' : (S_IFREG | 0444),
-                'st_size' : cover_size }
+                'st_mode': (S_IFREG | 0444),
+                'st_size': cover_size}
         elif playlist_dir_m:
             pass
         elif playlist_track_m:
@@ -485,11 +491,11 @@ class GMusicFS(LoggingMixIn, Operations):
             track = album.get_track(parts['track'])
             # Genre tag is always set to Other as Google MP3 genre tags are not id3v1 id.
             id3v1 = struct.pack("!3s30s30s30s4s30sb", 'TAG', str(track['title']), str(track['artist']),
-        	                str(track.get('album','')), str(0), str(track.get('comment','')), 12)
+                            str(track.get('album', '')), str(0), str(track.get('comment', '')), 12)
             buf = u.read(size - ID3V1_TRAILER_SIZE) + id3v1
         else:
             buf = u.read(size)
-            
+
         try:
             u.bytes_read += size
         except AttributeError:
@@ -509,10 +515,10 @@ class GMusicFS(LoggingMixIn, Operations):
             return ['.', '..', 'artists', 'playlists']
         elif path == '/artists':
             artist_dirs = map((lambda a: self.transform(a.dirname)), self.library.get_artists())
-            return  ['.','..'] + artist_dirs
+            return ['.', '..'] + artist_dirs
         elif path == '/playlists':
             playlist_dirs = map((lambda p: self.transform(p.dirname)), self.library.get_playlists())
-            return  ['.','..'] + playlist_dirs
+            return ['.', '..'] + playlist_dirs
         elif artist_dir_m:
             # Artist directory, lists albums.
             parts = artist_dir_m.groupdict()
@@ -521,13 +527,13 @@ class GMusicFS(LoggingMixIn, Operations):
             # Sort albums by year:
             album_dirs = [u'{year:04d} - {name}'.format(
                 year=a.get_year(), name=self.transform(a.normtitle)) for a in albums]
-            return ['.','..'] + album_dirs
+            return ['.', '..'] + album_dirs
         elif artist_album_dir_m:
             # Album directory, lists tracks.
             parts = artist_album_dir_m.groupdict()
             artist = self.library.get_artist(parts['artist'])
             album = artist.get_album(parts['album'])
-            files = ['.','..']
+            files = ['.', '..']
             for track in album.get_tracks(get_size=True):
                 files.append('%03d - %s.mp3' %
                     (track['trackNumber'], self.transform(formatNames(track['title']))))
@@ -561,8 +567,8 @@ def getDeviceId(verbose=False):
             'chmod 600 %s' % cred_path)
     config = ConfigParser.ConfigParser()
     config.read(cred_path)
-    username = config.get('credentials','username')
-    password = config.get('credentials','password')
+    username = config.get('credentials', 'username')
+    password = config.get('credentials', 'password')
     if not username or not password:
         raise NoCredentialException(
             'No username/password could be read from config file'
@@ -576,8 +582,9 @@ def getDeviceId(verbose=False):
     for device in api.get_registered_devices():
         if not device['name']:
             device['name'] = 'NoName'
-        if device['id'][1]=='x':
+        if device['id'][1] == 'x':
             print '%s : %s' % (device['name'], device['id'])
+
 
 def main():
     log.setLevel(logging.WARNING)
@@ -640,7 +647,7 @@ def main():
         logging.getLogger('requests.packages.urllib3').setLevel(logging.WARNING)
         verbosity = 0
 
-    fs = GMusicFS(mountpoint, true_file_size=args.true_file_size, verbose=verbosity, scan_library= not args.nolibrary, lowercase=args.lowercase)
+    fs = GMusicFS(mountpoint, true_file_size=args.true_file_size, verbose=verbosity, scan_library=not args.nolibrary, lowercase=args.lowercase)
     try:
         fuse = FUSE(fs, mountpoint, foreground=args.foreground,
                     ro=True, nothreads=True, allow_other=args.allusers)

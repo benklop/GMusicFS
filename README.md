@@ -46,8 +46,6 @@ Installing GMusicFS requires two dependencies:
  * [fusepy](https://github.com/terencehonles/fusepy)
  * [gmusicapi](https://github.com/simon-weber/Unofficial-Google-Music-API)
 
-```
-
 These will be installed automatically when installing GMusicFS:
 
 ```

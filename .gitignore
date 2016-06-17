@@ -3,3 +3,5 @@ GMusicFS.egg-info
 *.pyc
 *.log
 notmine/
+build/
+dist/

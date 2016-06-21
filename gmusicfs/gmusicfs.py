@@ -31,6 +31,14 @@ log = logging.getLogger('gmusicfs')
 deviceId = None
 pp = pprint.PrettyPrinter(indent=4)  # For debug logging
 
+ALBUM_REGEX = '(?P<album>[^/]+) \((?P<year>[0-9]{4})\)'
+ALBUM_FORMAT = u'{name} ({year:04d})'
+
+TRACK_REGEX = '(?P<track>(?P<number>[0-9]+) - (?P<title>.*)\.mp3)'
+TRACK_FORMAT = '{number:02d} - {name}.mp3'
+
+IMAGE_REGEX = '(?P<image>[^/]+\.jpg)'
+
 # Size of the ID3v1 trailer appended to the mp3 file (at read time)
 # Add the size to the reported size of the mp3 file so read function receive correct params.
 # The read function will read size bytes - 128 since we have to generate this 128 bytes.
@@ -51,7 +59,7 @@ class Playlist(object):
 
     def __init__(self, library, pldata):
         self.library = library
-        self.__filename_re = re.compile('^([0-9]+) - [^/]+\.mp3$')
+        self.__filename_re = re.compile(TRACK_REGEX)
 
         self.realname = pldata['name']
         self.dirname = formatNames(self.realname).strip()
@@ -87,7 +95,7 @@ class Playlist(object):
 
         m = self.__filename_re.match(filename)
         if m:
-            tracknum = int(m.groups()[0])
+            tracknum = int(m.group('title'))
             return self.__tracks[tracknum - 1]
         return None
 
@@ -137,7 +145,7 @@ class Album(object):
         self.normtitle = formatNames(self.realtitle)
         self.__tracks = []
         self.__sorted = True
-        self.__filename_re = re.compile("^[0-9]+ - (.*)\.mp3$")
+        self.__filename_re = re.compile(TRACK_REGEX)
 
     def add_track(self, track):
         """Add a track to the album"""
@@ -167,7 +175,7 @@ class Album(object):
 
         m = self.__filename_re.match(filename)
         if m:
-            title = m.groups()[0]
+            title = m.group('title')
             for track in self.get_tracks():
                 if formatNames(track['title'].lower()) == title.lower():
                     return track
@@ -362,18 +370,15 @@ class GMusicFS(LoggingMixIn, Operations):
         Operations.__init__(self)
 
         artist = '/artists/(?P<artist>[^/]+)'
-        album = '(?P<year>[0-9]{4}) - (?P<album>[^/]+)'
-        track = '(?P<track>[^/]+\.mp3)'
-        image = '(?P<image>[^/]+\.jpg)'
 
         self.artist_dir = re.compile('^{artist}$'.format(
             artist=artist))
         self.artist_album_dir = re.compile('^{artist}/{album}$'.format(
-            artist=artist, album=album))
+            artist=artist, album=ALBUM_REGEX))
         self.artist_album_track = re.compile('^{artist}/{album}/{track}$'.format(
-            artist=artist, album=album, track=track))
+            artist=artist, album=ALBUM_REGEX, track=TRACK_REGEX))
         self.artist_album_image = re.compile('^{artist}/{album}/{image}$'.format(
-            artist=artist, album=album, image=image))
+            artist=artist, album=ALBUM_REGEX, image=IMAGE_REGEX))
 
         self.playlist_dir = re.compile('^/playlists/(?P<playlist>[^/]+)$')
         self.playlist_track = re.compile(
@@ -548,7 +553,7 @@ class GMusicFS(LoggingMixIn, Operations):
             artist = self.library.get_artist(parts['artist'])
             albums = artist.get_albums()
             # Sort albums by year:
-            album_dirs = [u'{year:04d} - {name}'.format(
+            album_dirs = [ALBUM_FORMAT.format(
                 year=a.get_year(), name=self.transform(a.normtitle)) for a in albums]
             return ['.', '..'] + album_dirs
         elif artist_album_dir_m:
@@ -558,8 +563,9 @@ class GMusicFS(LoggingMixIn, Operations):
             album = artist.get_album(parts['album'])
             files = ['.', '..']
             for track in album.get_tracks(get_size=True):
-                files.append('%03d - %s.mp3' %
-                    (track['trackNumber'], self.transform(formatNames(track['title']))))
+                files.append(TRACK_FORMAT.format(
+                    number=track['trackNumber'], artist=track['artist'],
+                    name=self.transform(formatNames(track['title']))))
             # Include cover image:
             cover = album.get_cover_url()
             if cover:

@@ -3,7 +3,8 @@ from setuptools import setup
 install_requires = [
     'fusepy',
     'gmusicapi',
-    'oauth2client'
+    'oauth2client',
+    'eyed3'
 ]
 
 setup(

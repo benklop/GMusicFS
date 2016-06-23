@@ -17,8 +17,7 @@ import threading
 import logging
 import pprint
 
-from eyed3.id3 import Tag
-from eyed3.id3 import ID3_V1_0, ID3_V1_1, ID3_V2_3, ID3_V2_4
+from eyed3.id3 import Tag, ID3_V2_4
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
 import gmusicapi.exceptions
 from gmusicapi import Mobileclient as GoogleMusicAPI
@@ -181,10 +180,10 @@ class Album(object):
                 tag.images.set(0x03, art, 'image/jpeg', u'Front cover')
         return tag
 
-    def render_tag(self, tag, version):
+    def render_tag(self, tag):
         tmpfd, tmpfile = tempfile.mkstemp()
         os.close(tmpfd)
-        tag.save(tmpfile, version)
+        tag.save(tmpfile, ID3_V2_4)
         tmpfd = open(tmpfile, "r")
         rendered_tag = tmpfd.read()
         tmpfd.close()
@@ -202,14 +201,14 @@ class Album(object):
                 u.close()
 
             tag = self.gen_tag(track, fake_art=True)
-            id3data = self.render_tag(tag, ID3_V2_4)
-            track['tagSize'] = str(int(track['estimatedSize']) + 128 + len(id3data))
+            id3data = self.render_tag(tag)
+            track['tagSize'] = str(int(track['estimatedSize']) + len(id3data))
             del id3data
             for frame in tag.frame_set.getAllFrames():
                 if hasattr(frame, 'text'):
-                    print frame.id, frame.text
+                    log.debug(frame.id, frame.text)
                 else:
-                    print frame.id
+                    log.debug(frame.id)
             del tag
             for tnum in range(0, len(self.__tracks)):
                 if self.__tracks[tnum]['id'] == track['id']:
@@ -619,21 +618,13 @@ class GMusicFS(LoggingMixIn, Operations):
             raise RuntimeError('unexpected path: %r' % path)
         (album, track) = album_track
 
+        id3v2data = ''
         tag = self.__tags.get(fh, None)
-        if tag is None:
-            id3v1data = '\0' * 128
-            id3v2data = ''
-        else:
-            id3v1data = album.render_tag(tag, ID3_V1_1)
-            id3v2data = album.render_tag(tag, ID3_V2_4)
+        if tag:
+            id3v2data = album.render_tag(tag)
 
-        start_id3v1tag = int(track['tagSize']) - 128
         end_id3v2tag = len(id3v2data)
-        buf = ""
-
-        if offset >= start_id3v1tag:
-            buf = id3v1data[offset - start_id3v1tag:(offset - start_id3v1tag) + size]
-            return buf
+        buf = ''
 
         if offset < end_id3v2tag:
             buf = id3v2data[offset:offset+size]
@@ -653,29 +644,18 @@ class GMusicFS(LoggingMixIn, Operations):
                 if u is None:
                     raise RuntimeError('unexpected path: %r' % path)
 
-        if offset + size > start_id3v1tag:
-            temp_buf = u.read(start_id3v1tag - offset)
-            if len(temp_buf) < start_id3v1tag - offset:
-                diff = start_id3v1tag - offset - len(temp_buf)
-                temp_buf += '\0' * diff
-            buf += temp_buf
-            buf += id3v1data[:size - (start_id3v1tag - offset)]
-            try:
-                u.bytes_read += (start_id3v1tag - offset)
-            except AttributeError:
-                pass
-        else:
-            temp_buf = u.read(size)
-            if len(temp_buf) < size:
-                diff = size - len(temp_buf)
-                temp_buf += '\0' * diff
-            buf += temp_buf
-            try:
-                u.bytes_read += size
-            except AttributeError:
-                # Only urllib2 files need this attribute, harmless to
-                # ignore it.
-                pass
+        temp_buf = u.read(size)
+        if len(temp_buf) < size:
+            diff = size - len(temp_buf)
+            temp_buf += '\0' * diff
+        buf += temp_buf
+        try:
+            u.bytes_read += size
+        except AttributeError:
+            # Only urllib2 files need this attribute, harmless to
+            # ignore it.
+            pass
+
         return buf
 
     def readdir(self, path, fh):

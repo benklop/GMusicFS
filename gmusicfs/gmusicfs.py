@@ -773,7 +773,7 @@ def main():
                         ' (Requires user_allow_other set in /etc/fuse.conf)',
                         action='store_true', dest='allow_other')
     parser.add_argument('--allow_root', help='Allow root access to files',
-                        action='store_false', dest='allow_root')
+                        action='store_true', dest='allow_root')
     parser.add_argument('--uid', help='Set filesystem uid (numeric)', default=os.getuid(),
                         action='store', dest='uid')
     parser.add_argument('--gid', help='Set filesystem gid (numeric)', default=os.getgid(),

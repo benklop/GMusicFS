@@ -381,7 +381,7 @@ class MusicLibrary(object):
                         album_info = self.__galbums[track['albumId']] = self.api.get_album_info(track['albumId'], include_tracks=False)
                     except gmusicapi.exceptions.CallFailure:
                         log.exception("Failed to download album info for %s '%s'", track['albumId'], track['album'])
-                        #album_info = {}
+                        album_info = {}
                 if album_info.has_key('artistId') and len(album_info['artistId']) > 0 and album_info['artistId'][0] != "":
                     artist_id = album_info['artistId'][0]
                     if self.__gartists.has_key(artist_id):
@@ -506,7 +506,8 @@ class GMusicFS(LoggingMixIn, Operations):
         """Construct and results stat information based on a track"""
         # TODO This could be moved into a Track class in the future
 
-        st['st_mode'] = (S_IFREG | 0444)
+        st['st_mode'] = (S_IFREG | 0o444)
+        st['st_nlink'] = 1
         st['st_size'] = int(track['tagSize'])
         if 'bytes' in track:
             st['st_size'] = int(track['bytes'])
@@ -516,6 +517,8 @@ class GMusicFS(LoggingMixIn, Operations):
         if 'recentTimestamp' in track:
             st['st_atime'] = int(track['recentTimestamp']) / 1000000
         return st
+    
+    listxattr = None
 
     def getattr(self, path, fh=None):
         """Get information about a file or directory"""
@@ -528,7 +531,7 @@ class GMusicFS(LoggingMixIn, Operations):
 
         # Default to a directory
         st = {
-            'st_mode': (S_IFDIR | 0755),
+            'st_mode': (S_IFDIR | 0o755),
             'st_nlink': 2}
         date = 0  # Make the date really old, so that cp -u works correctly.
         st['st_ctime'] = st['st_mtime'] = st['st_atime'] = date
@@ -578,6 +581,8 @@ class GMusicFS(LoggingMixIn, Operations):
                 track = album.calc_size(track)
         return st
 
+    getxattr = None
+    
     def _open(self, path, fh):
         album_track = self.__urls.get(fh, None)
         if album_track is None:
@@ -764,9 +769,15 @@ def main():
     parser.add_argument('-t', '--truefilesize', help='Report true filesizes'
                         ' (slower directory reads)',
                         action='store_true', dest='true_file_size')
-    parser.add_argument('--allusers', help='Allow all system users access to files'
+    parser.add_argument('--allow_other', help='Allow all system users access to files'
                         ' (Requires user_allow_other set in /etc/fuse.conf)',
-                        action='store_true', dest='allusers')
+                        action='store_true', dest='allow_other')
+    parser.add_argument('--allow_root', help='Allow root access to files',
+                        action='store_false', dest='allow_root')
+    parser.add_argument('--uid', help='Set filesystem uid (numeric)', default=os.getuid(),
+                        action='store', dest='uid')
+    parser.add_argument('--gid', help='Set filesystem gid (numeric)', default=os.getgid(),
+                        action='store', dest='gid')
     parser.add_argument('--nolibrary', help='Don\'t scan the library at launch',
                         action='store_true', dest='nolibrary')
     parser.add_argument('--deviceid', help='Get the device ids bounded to your account',
@@ -801,7 +812,7 @@ def main():
     fs = GMusicFS(mountpoint, true_file_size=args.true_file_size, verbose=verbosity, scan_library=not args.nolibrary, lowercase=args.lowercase)
     try:
         fuse = FUSE(fs, mountpoint, foreground=args.foreground,
-                    ro=True, nothreads=True, allow_other=args.allusers)
+                    ro=True, nothreads=True, allow_other=args.allow_other, allow_root=args.allow_root, uid=args.uid, gid=args.gid)
     finally:
         fs.cleanup()
 

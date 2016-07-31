@@ -49,7 +49,7 @@ Installing GMusicFS requires two dependencies:
 These will be installed automatically when installing GMusicFS:
 
 ```
-pip install https://github.com/hadleyrich/GMusicFS/tarball/master
+pip install https://github.com/evandeaubl/GMusicFS/tarball/master
 ```
 
 Usage

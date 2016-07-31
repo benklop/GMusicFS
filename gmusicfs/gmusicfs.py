@@ -90,7 +90,7 @@ class Playlist(object):
 
         m = self.__filename_re.match(filename)
         if m:
-            tracknum = int(m.group('title'))
+            tracknum = int(m.group('number'))
             return self.__tracks[tracknum - 1]
         return None
 

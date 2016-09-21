@@ -419,6 +419,7 @@ class MusicLibrary(object):
             # Add track to list of all tracks, indexable by track ID
             if 'id' in track:
                 self.__tracks[track['id']] = track
+            time.sleep(1)
 
         log.info('%d tracks loaded.' % len(tracks))
         log.info('%d artists loaded.' % len(self.__artists))
@@ -509,7 +510,7 @@ class GMusicFS(LoggingMixIn, Operations):
         if 'recentTimestamp' in track:
             st['st_atime'] = int(track['recentTimestamp']) / 1000000
         return st
-    
+
     listxattr = None
 
     def getattr(self, path, fh=None):
@@ -574,7 +575,7 @@ class GMusicFS(LoggingMixIn, Operations):
         return st
 
     getxattr = None
-    
+
     def _open(self, path, fh):
         album_track = self.__urls.get(fh, None)
         if album_track is None:

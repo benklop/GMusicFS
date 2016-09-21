@@ -332,7 +332,7 @@ class MusicLibrary(object):
             username = self.config.get('credentials', 'username')
             password = self.config.get('credentials', 'password')
             global deviceId
-            deviceId = self.config.get('credentials', 'deviceId') || GoogleMusicAPI.FROM_MAC_ADDRESS
+            deviceId = self.config.get('credentials', 'deviceId') or GoogleMusicAPI.FROM_MAC_ADDRESS
             if not username or not password:
                 raise NoCredentialException(
                     'No username/password could be read from config file'

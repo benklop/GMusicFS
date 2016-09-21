@@ -341,8 +341,6 @@ class MusicLibrary(object):
                 raise NoCredentialException(
                     'No deviceId could be read from config file'
                     ': %s' % cred_path)
-            if deviceId.startswith("0x"):
-                deviceId = deviceId[2:]
 
         self.api = GoogleMusicAPI(debug_logging=self.verbose)
         log.info('Logging in...')

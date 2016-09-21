@@ -331,20 +331,14 @@ class MusicLibrary(object):
             self.config.read(cred_path)
             username = self.config.get('credentials', 'username')
             password = self.config.get('credentials', 'password')
-            global deviceId
-            deviceId = self.config.get('credentials', 'deviceId') or GoogleMusicAPI.FROM_MAC_ADDRESS
             if not username or not password:
                 raise NoCredentialException(
                     'No username/password could be read from config file'
                     ': %s' % cred_path)
-            if not deviceId:
-                raise NoCredentialException(
-                    'No deviceId could be read from config file'
-                    ': %s' % cred_path)
 
         self.api = GoogleMusicAPI(debug_logging=self.verbose)
         log.info('Logging in...')
-        self.api.login(username, password, deviceId)
+        self.api.login(username, password, GoogleMusicAPI.FROM_MAC_ADDRESS)
         log.info('Login successful.')
 
     def __set_key_from_ginfo(self, track, ginfo, key, to_key=None):

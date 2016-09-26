@@ -39,6 +39,8 @@ ALBUM_FORMAT = u'{name} ({year:04d})'
 TRACK_REGEX = '(?P<track>(?P<number>[0-9]+) - (?P<title>.*)\.mp3)'
 TRACK_FORMAT = '{number:02d} - {name}.mp3'
 
+ID3V1_TRAILER_SIZE = 128
+
 def formatNames(string_from):
     """Format a name to make it suitable to use as a filename"""
     return re.sub('/', '-', string_from)
@@ -46,7 +48,7 @@ def formatNames(string_from):
 
 class NoCredentialException(Exception):
     pass
-
+        
 
 class Playlist(object):
     """This class manages playlist information"""
@@ -67,12 +69,12 @@ class Playlist(object):
                 track['id'] = entry['trackId']
             else:
                 track = self.library.get_track(entry['trackId'])
+            if 'bytes' not in track:
+                track['bytes'] = int(track['estimatedSize']) + ID3V1_TRAILER_SIZE
             self.__tracks.append(track)
 
     def get_tracks(self, get_size=False):
         """Return the list of tracks, in order, that comprise the playlist"""
-
-        ID3V1_TRAILER_SIZE = 128
         # TODO Converge implementation by creating a Track class?
         #      It could get the size only on demand per-track
         # Retrieve and remember the filesize of each track:
@@ -90,7 +92,7 @@ class Playlist(object):
 
         m = self.__filename_re.match(filename)
         if m:
-            tracknum = int(m.group('title'))
+            tracknum = int(m.group('number'))
             return self.__tracks[tracknum - 1]
         return None
 
@@ -417,19 +419,20 @@ class MusicLibrary(object):
             album.add_track(track)
 
             # Add track to list of all tracks, indexable by track ID
-            if 'id' in track:
-                self.__tracks[track['id']] = track
-
-        log.info('%d tracks loaded.' % len(tracks))
-        log.info('%d artists loaded.' % len(self.__artists))
-        log.info('%d albums loaded.' % len(self.__albums))
+            #if 'id' in track:
+            self.__tracks[track['id']] = track
 
         # Add all playlists
         playlists = self.api.get_all_user_playlist_contents()
         for pldata in playlists:
             playlist = Playlist(self, pldata)
-            self.__playlists[playlist.dirname.lower()] = playlist
-        log.debug('%d playlists loaded.' % len(self.__playlists))
+            if playlist.dirname.lower():
+                self.__playlists[playlist.dirname.lower()] = playlist
+
+        log.info('%d tracks loaded.' % len(tracks))
+        log.info('%d artists loaded.' % len(self.__artists))
+        log.info('%d albums loaded.' % len(self.__albums))
+        log.info('%d playlists loaded.' % len(self.__playlists))
 
     def get_artists(self):
         """Return all artists in the library"""
@@ -441,7 +444,7 @@ class MusicLibrary(object):
 
     def get_playlists(self):
         """Return list of all playlists in the library"""
-        return self.__playlists.values()
+        return self.__playlists
 
     def get_playlist(self, name):
         """Return the playlist from the library with the specified name"""
@@ -500,9 +503,11 @@ class GMusicFS(LoggingMixIn, Operations):
 
         st['st_mode'] = (S_IFREG | 0o444)
         st['st_nlink'] = 1
-        st['st_size'] = int(track['tagSize'])
+        
         if 'bytes' in track:
             st['st_size'] = int(track['bytes'])
+        else:
+            st['st_size'] = int(track['tagSize'])
         st['st_ctime'] = st['st_mtime'] = st['st_atime'] = 0
         if 'creationTimestamp' in track:
             st['st_ctime'] = st['st_mtime'] = int(track['creationTimestamp']) / 1000000
@@ -564,13 +569,13 @@ class GMusicFS(LoggingMixIn, Operations):
         elif playlist_track_m:
             parts = playlist_track_m.groupdict()
             playlist = self.library.get_playlist(parts['playlist'])
+            log.info("parts: {}".format(parts))
             track = playlist.get_track(parts['track'])
+            log.info("track: {}".format(track))
             st = self.track_to_stat(track)
         else:
             raise FuseOSError(ENOENT)
-
-            if not track.has_key('tagSize'):
-                track = album.calc_size(track)
+            
         return st
 
     getxattr = None
@@ -587,7 +592,8 @@ class GMusicFS(LoggingMixIn, Operations):
 
     def open(self, path, fh):
         artist_album_track_m = self.artist_album_track.match(path)
-
+        playlist_track_m = self.playlist_track.match(path)
+        
         if artist_album_track_m:
             parts = artist_album_track_m.groupdict()
             artist = self.library.get_artist(parts['artist'])
@@ -598,6 +604,12 @@ class GMusicFS(LoggingMixIn, Operations):
 
             self.__urls[fh] = (album, track)
             self.__tags[fh] = (album.gen_tag(track))
+        elif playlist_track_m:
+            parts = playlist_track_m.groupdict()
+            playlist = self.library.get_playlist(parts['playlist'])
+            track = playlist.get_track(parts['track'])
+            self.__urls[fh] = (playlist, track)
+            self.__tags[fh] = (None)
         else:
             RuntimeError('unexpected opening of path: %r' % path)
 
@@ -661,6 +673,7 @@ class GMusicFS(LoggingMixIn, Operations):
         artist_album_track_m = self.artist_album_track.match(path)
         playlist_dir_m = self.playlist_dir.match(path)
 
+        log.info("{}: {}".format(path, playlist_dir_m))
         if path == '/':
             return ['.', '..', 'artists', 'playlists']
         elif path == '/artists':
@@ -668,7 +681,11 @@ class GMusicFS(LoggingMixIn, Operations):
             artist_dirs = map((lambda a: self.transform(a.dirname)), self.library.get_artists().values())
             return ['.', '..'] + artist_dirs
         elif path == '/playlists':
-            playlist_dirs = map((lambda p: self.transform(p.dirname)), self.library.get_playlists())
+            try:
+                playlist_dirs = map((lambda p: self.transform(p.dirname)), self.library.get_playlists().values())
+            except:
+                log.exception("PD")
+            log.info("playlist_dir: {}".format(playlist_dirs))
             return ['.', '..'] + playlist_dirs
         elif artist_dir_m:
             # Artist directory, lists albums.
@@ -699,6 +716,7 @@ class GMusicFS(LoggingMixIn, Operations):
                 files.append(self.transform(formatNames('%03d - %s - %s - %s.mp3' % (tracknum, track['artist'], track['album'], track['title']))))
                 tracknum += 1
             return files
+        return ['.', '..']
 
 
 def getDeviceId(verbose=False):

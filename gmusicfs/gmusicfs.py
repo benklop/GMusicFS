@@ -76,7 +76,12 @@ class Album(object):
         self.__artist = self.__library.artists[data['artistId'][0]]
         self.__title = data['album']
         self.__tracks = {}
-        self.__year = 2005
+        self.__year = 0
+        if 'albumArtRef' in data:
+            self.__art_url = data['albumArtRef'][0]['url']
+        else:
+            self.__art_url = None
+        self.__art = None
         
     @property
     def id(self):
@@ -97,9 +102,27 @@ class Album(object):
     @property
     def artist(self):
         return self.__artist
-        
+    
+    @property
+    def art(self):
+        if not self.__art:
+            self.__load_art()
+        return self.__art
+     
     def add_track(self, track):
         self.__tracks[track.title] = track
+        self.__year = track.year or self.__year # TODO: not really nice
+
+    def __load_art(self):
+        if not self.__art_url:
+            return
+        log.info("loading art album: {0.title}".format(self))
+        self.__art = ""
+        u = urllib2.urlopen(self.__art_url)
+        data = u.read()
+        while data != "":
+            self.__art += data
+            data = u.read()
 
     def __str__(self):
         return "{0.title} ({0.year:04d})".format(self)
@@ -117,15 +140,37 @@ class Track(object):
         self.__data = data
         self.__title = data['title']
         self.__number = int(data['trackNumber'])
+        self.__year = int(data.get('year', 0))
         self.__album = self.__library.albums.get(data['albumId'], None)
         self.__url = None
-        self.__gen_tag()
-        self.__stream_cache = str(self.get_rendered_tag())
+        self.__stream_cache = ""
+        self.__tag = None
         
     def __gen_tag(self):
         self.__tag = Tag()
         self.__tag.album = self.__data['album']
         self.__tag.artist = self.__data['artist']
+        
+        if self.__data.has_key('album'):
+            self.__tag.album = self.__data['album']
+        if self.__data.has_key('artist'):
+            self.__tag.artist = self.__data['artist']
+        if self.__data.has_key('title'):
+            self.__tag.title = self.__data['title']
+        if self.__data.has_key('discNumber'):
+            self.__tag.disc_num = int(self.__data['discNumber'])
+        if self.__data.has_key('trackNumber'):
+            self.__tag.track_num = int(self.__data['trackNumber'])
+        if self.__data.has_key('genre'):
+            self.__tag.genre = self.__data['genre']
+        if self.__data.has_key('albumArtist') and self.__data['albumArtist'] != self.__data['artist']:
+            self.__tag.album_artist = self.__data['albumArtist']
+        if self.__data.has_key('year') and int(self.__data['year']) != 0:
+            self.__tag.recording_date = self.__data['year']
+            
+        if self.album.art:
+            self.__tag.images.set(0x03, self.album.art, 'image/jpeg', u'Front cover')
+        
         self.__rendered_tag = None
         
     def get_rendered_tag(self):
@@ -154,6 +199,10 @@ class Track(object):
     @property
     def album(self):
         return self.__album
+        
+    @property
+    def year(self):
+        return self.__year
     
     def get_attr(self):
         st = {}
@@ -175,7 +224,9 @@ class Track(object):
         return st
         
     def _open(self):
-        """Return the track stream URL"""
+        if not self.__tag: # Crating tag only when needed
+            self.__gen_tag()
+            self.__stream_cache = str(self.get_rendered_tag())
         if not self.__url:
             self.__url = urllib2.urlopen(self.__library.get_stream_url(self.id))
     
@@ -186,9 +237,11 @@ class Track(object):
                 return '' # Not enough data
         elif offset == 0: # Trying to filter OS open request
             self._open()
-        
+            return self.__stream_cache[:size]
+            
         if self.__url:
-            self.__stream_cache += self.__url.read() # Cache all available data
+            #self.__stream_cache += self.__url.read() # Cache all available data
+            self.__stream_cache += self.__url.read(offset + size - len(self.__stream_cache)) # Cache all available data
         if offset > len(self.__stream_cache) or offset + size > len(self.__stream_cache):
             return '' # Not enough data
         return self.__stream_cache[offset:offset + size]
@@ -318,10 +371,6 @@ class MusicLibrary(object):
             try:
                 log.debug('track = %s' % pp.pformat(track))
                 
-                trackId = track['id']
-                if trackId in self.__tracks:
-                    continue
-                
                 artistId = track['artistId'][0]
                 if artistId not in self.__artists:
                     self.__artists[artistId] = Artist(self, track)
@@ -334,8 +383,9 @@ class MusicLibrary(object):
                     artist.add_album(self.__albums[albumId])
                 album = self.__albums[albumId]
                 
-                self.__tracks[trackId] = Track(self, track)
-                album.add_track(self.__tracks[trackId])
+                track = Track(self, track)
+                self.__tracks[track.id] = track
+                album.add_track(track)
             except:
                 log.exception("Error loading track: {}".format(track))
                 errors += 1
@@ -348,7 +398,7 @@ class MusicLibrary(object):
                 except:
                     log.exception("Error loading playlist: {}".format(pl))
                     errors += 1
-                    
+        
         log.info("Loaded {} tracks, {} albums, {} artists and {} playlists ({} errors).".format(len(self.__tracks), len(self.__albums), len(self.__artists), len(self.__playlists), errors))
     
     def cleanup(self):
@@ -435,6 +485,7 @@ class GMusicFS(LoggingMixIn, Operations):
         return st
 
     def open(self, path, fh):
+        #log.info("open: {} ({})".format(path, fh))
         artist_album_track_m = self.artist_album_track.match(path)
         playlist_track_m = self.playlist_track.match(path)
         
@@ -455,18 +506,20 @@ class GMusicFS(LoggingMixIn, Operations):
         return fh
 
     def release(self, path, fh):
-        log.info("release: {} ({})".format(path, fh))
+        #log.info("release: {} ({})".format(path, fh))
         if fh not in self.__opened_tracks:
-            raise RuntimeError('unexpected path: %r' % path)
+            return
+            #raise RuntimeError('unexpected path: %r' % path)
         track = self.__opened_tracks.pop(fh)
         if track not in self.__opened_tracks.values():
             track.close()
 
     def read(self, path, size, offset, fh):
+        #log.info("read: {} offset: {} size: {} ({})".format(path, offset, size, fh))
         track = self.__opened_tracks.get(fh, None)
         if track is None:
-            raise RuntimeError('unexpected path: %r' % path)
-        log.info("read: {} offset: {} size: {} ({})".format(path, offset, size, fh))
+            return ''
+            #raise RuntimeError('unexpected path: %r' % path)
         return track.read(offset, size)
 
     def readdir(self, path, fh):

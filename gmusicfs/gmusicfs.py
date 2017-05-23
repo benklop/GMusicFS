@@ -3,8 +3,8 @@
 import os
 import re
 import sys
-import urllib2
-import ConfigParser
+import urllib as urlib2
+import configparser as ConfigParser 
 from errno import ENOENT
 from stat import S_IFDIR, S_IFREG
 import argparse
@@ -18,8 +18,8 @@ from fuse import FUSE, FuseOSError, Operations, LoggingMixIn#, fuse_get_context
 from gmusicapi import Mobileclient as GoogleMusicAPI
 #from gmusicapi import Webclient as GoogleMusicWebAPI
 
-reload(sys)  # Reload does the trick
-sys.setdefaultencoding('UTF-8')
+#reload(sys)  # Reload does the trick
+#sys.setdefaultencoding('UTF-8')
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger('gmusicfs')
@@ -146,6 +146,18 @@ class Album(object):
 class Track(object):
     
     def __init__(self, library, data):
+
+        errorFlag = 0
+        #FISH
+        if data['kind'] != 'sj#track':
+            print ("\n---------------------------\nnot a track")
+        else:
+            '''
+            print ("\n\n\n########################\n" + data['id'] + " - sj#track!\n")
+            print (data)
+            print ("########################")
+            '''
+
         self.__library = library
         if 'track' in data: # Playlists manage tracks in a different way
             self.__id = data['trackId']
@@ -158,10 +170,173 @@ class Track(object):
             self.__id = data['nid']
             
         self.__data = data
-        self.__title = data['title']
-        self.__number = int(data['trackNumber'])
-        self.__year = int(data.get('year', 0))
-        self.__album = self.__library.albums.get(data['albumId'], None)
+
+        #FISH
+
+        #ex bad data
+        '''
+        {
+            'kind': 'sj#playlistEntry',
+            'id': '147b7887-2f6a-38b0-9d0e-4168fa881aed', 
+            'clientId': 'e3159570-6473-4ee0-b437-5ee7d2c73650', 
+            'playlistId': '558a40fe-4e64-434f-b90f-72185bae5e66', 
+            'absolutePosition': '01503059504007927071', 
+            'trackId': '6e8d33df-b04c-3b99-b6b3-dc38cb40f609', 
+            'creationTimestamp': '1481614791376812', 
+            'lastModifiedTimestamp': '1481614791376812', 
+            'deleted': False, 
+            'source': '1'
+        }
+
+        ########################
+        2f902400-5eb9-3ae5-bc7b-c554664e9c1c - #NOT A TRACK!
+
+        {
+            'kind': 'sj#playlistEntry', 
+            'id': '2f902400-5eb9-3ae5-bc7b-c554664e9c1c', 
+            'clientId': '821a5d33-67dd-4b69-b706-add338c44167', 
+            'playlistId': 'd6303ffa-5c5b-4b0a-b38f-54fe1e755f02', 
+            'absolutePosition': '02017612633061982205', 
+            'trackId': 'Tgarv4vwobsxyxtsott6p4qok5q', 
+            'creationTimestamp': '1491432379665824', 
+            'lastModifiedTimestamp': '1491432379665824', 
+            'deleted': False, 
+            'source': '2', 
+            'track': {
+                'kind': 'sj#track', 
+                'title': 'Creep', 
+                'artist': 'Radiohead', 
+                'composer': '', 
+                'album': 'Pablo Honey', 
+                'albumArtist': 'Radiohead', 
+                'year': 1993, 
+                'trackNumber': 2, 
+                'genre': "'90s Alternative", 
+                'durationMillis': '238000', 
+                'albumArtRef': [
+                    {
+                        'kind': 'sj#imageRef', 
+                        'url': 'http://lh3.googleusercontent.com/S7EzegIDPI54OwPL9-KNd4hIn2jDZOosfMOh6gVpyEBs397rk33UjqZh9s9IhFlbcROF3CtC', 
+                        'aspectRatio': '1', 
+                        'autogen': False
+                    }
+                ],
+                 'artistArtRef': [
+                    {
+                        'kind': 'sj#imageRef', 
+                        'url': 'http://lh3.googleusercontent.com/53cYhGcuBl6tJh4NAsrkxHW2dYReUv27bwrA1nb_KNCrgIKeGjhfl-NmUzsu6mJGoyg1UBuvpDM', 
+                        'aspectRatio': '2', 
+                        'autogen': False
+                    }
+                ], 
+                'playCount': 11, 
+                'discNumber': 1, 
+                'rating': '5', 
+                'estimatedSize': '9548304', 
+                'trackType': '7', 
+                'storeId': 'Tgarv4vwobsxyxtsott6p4qok5q', 
+                'albumId': 'Bgpaifizbaqexiz7gbmlga35c6a', 
+                'artistId': ['
+                    A3qpbllyfot4yhqo7isoomtctli'
+                ], 
+                'nid': 'garv4vwobsxyxtsott6p4qok5q', 
+                'trackAvailableForSubscription': True, 
+                'trackAvailableForPurchase': True, 
+                'albumAvailableForPurchase': False, 
+                'explicitType': '1', 
+                'lastRatingChangeTimestamp': '1483988691991000'
+            }
+        }
+        ########################
+
+        
+        #ex good data
+        {
+            'kind': 'sj#track', 
+            'id': '9f759b7e-8aab-30d9-ab48-67bdfc7bd00d', 
+            'clientId': '8ed67819-1bc3-4f9b-aff6-d407a2b91b7c', 
+            'creationTimestamp': '1493610464864279', 
+            'lastModifiedTimestamp': '1495531845157253', 
+            'recentTimestamp': '1493610464842000', 
+            'deleted': False, 
+            'title': 'Rule the World', 
+            'artist': 'Kamelot', 
+            'composer': '', 
+            'album': 'Ghost Opera: The Second Coming', 
+            'albumArtist': 'Kamelot', 
+            'year': 2007, 
+            'trackNumber': 2, 
+            'genre': 'Metal', 
+            'durationMillis': '220000', 
+            'albumArtRef': [
+                {
+                    'kind': 'sj#imageRef', 
+                    'url': 'http://lh3.googleusercontent.com/fBMethQQloWCqOkoIWGZNRX_b-B_hhuI6U4mEoxhC930U7JBGCEkaNvmTaHkplKLbJuei_XEPg', 
+                    'aspectRatio': '1', 
+                    'autogen': False
+                }
+            ], 
+            'artistArtRef': [
+                {
+                    'kind': 'sj#imageRef', 
+                    'url': 'http://lh3.googleusercontent.com/5v7rwEcVskiwIbcubGbIRsZjzlv7PC8ArTjrVForJx4KbGX2JEfvIuY7WfyHpojcxlEH6KshjLA', 
+                    'aspectRatio': '2', 
+                    'autogen': False
+                }
+            ], 
+            'playCount': 6, 
+            'discNumber': 1, 
+            'estimatedSize': '8832549', 
+            'trackType': '8', 
+            'storeId': 'Tqjbcpweva45farkyrlnm6vrrl4', 
+            'albumId': 'Bglg6zsrdbcqb4t3omqtyhcznb4', 
+            'artistId': [
+                'A7hirrnzyb5mdmdrd2avu7zmzzy'
+            ], 
+            'nid': 'Tqjbcpweva45farkyrlnm6vrrl4', 
+            'explicitType': '2'
+        }
+        #end data
+        '''
+        try:
+            self.__title = data['title']
+        except Exception:
+            errorFlag = 1
+            self.__title = ""
+            print ("error in __title")
+
+        try:
+            self.__number = int(data['trackNumber'])
+        except Exception:
+            errorFlag = 1
+            self.__number = 0;
+            print ("error in __number")
+
+
+
+        try:
+            self.__year = int(data.get('year', 0))
+        except Exception:
+            errorFlag = 1
+            self.__year = 0
+            print ("error in __year")
+
+
+
+
+        try:
+            self.__album = self.__library.albums.get(data['albumId'], None)
+        except Exception:
+            errorFlag = 1
+            self.__album = ""
+            print ("error in __album")
+
+        if errorFlag == 1:
+            print ("########################\n" + data['id'] + " - #NOT A TRACK!\n")
+            print (data)
+            print ("########################\n---------------------------------------")
+       
+        
         self.__url = None
         self.__stream_cache = ""
         self.__rendered_tag = None
@@ -204,10 +379,18 @@ class Track(object):
     @property
     def id(self):
         return self.__id
-        
+    
+    #FISH
     @property
     def number(self):
-        return self.__number
+
+        try:
+            numberT = self.__number
+            return numberT
+        except Exception:
+            print ("no track number")
+            return 0
+        
     
     @property
     def title(self):
@@ -278,6 +461,8 @@ class Playlist(object):
         self.__id = data['id']
         self.__name = data['name']
         self.__tracks = {}
+
+
         for track in data['tracks']:
             trackId = track['trackId']
             try:
@@ -289,6 +474,10 @@ class Playlist(object):
                     tr = self.__library.tracks[trackId]
                 else:
                     tr = Track(self.__library, track)
+                #FISH
+                print ('#1debug')
+                print (tr)
+                print ('#1end')
                 self.__tracks[tr.title] = tr
             except:
                 log.exception("error: {}".format(track))
@@ -390,8 +579,19 @@ class MusicLibrary(object):
                 
                 if 'artistId' not in track:
                     track['artistId'] = track['artist'] # if we don't have an artistID, use the name as the id
-                
-                artistId = track['artistId'][0]
+
+                if not track['artistId']:
+                    print ("#artistID is empty")
+                    continue
+                else:
+                    artistId = track['artistId'][0]
+                    '''
+                    print ("#__populate_library_1")
+                    print ("\ttrack['artistId'][0]:")
+                    print (track['artistId'])
+                    print ("#end __populate_library_1")
+                    '''
+
                 if artistId not in self.__artists:
                     self.__artists[artistId] = Artist(self, track)
                     self.__artists_by_name[str(self.__artists[artistId])] = self.__artists[artistId]
@@ -560,6 +760,9 @@ class GMusicFS(LoggingMixIn, Operations):
             return ['.', '..', 'artists', 'playlists']
             
         elif path == '/artists':
+
+            #FISH
+            #TODO: aaaaaaaaaa
             return ['.', '..'] + self.library.artists_by_name.keys()
             
         elif path == '/playlists':

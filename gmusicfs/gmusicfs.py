@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 
 import os
 import re
@@ -161,11 +161,11 @@ class Track(object):
         if data['kind'] != 'sj#track':
             print ("\n---------------------------\nnot a track?")
         else:
-            '''
+            
             print ("\n\n\n########################\n" + data['id'] + " - sj#track!\n")
             print (data)
             print ("########################")
-            '''
+            
 
         self.__library = library
         if 'track' in data: # Playlists manage tracks in a different way
@@ -415,7 +415,8 @@ class Track(object):
         return self.__year
 
     def get_attr(self):
-        print(self.__data)
+        #print("get attr")
+        #print(self.__data)
         #if self.__data['kind'] != "sj#track":
 
 
@@ -445,14 +446,18 @@ class Track(object):
         return st
 
     def _open(self):
-        #pass
-        self.__url = urllib.request.urlopen(self.__library.get_stream_url(self.id))
-        self.__stream_cache += self.__url.read(32*1024) # Some caching
+        pass
+        #self.__url = urllib.request.urlopen(self.__library.get_stream_url(self.id))
+        #self.__stream_cache += self.__url.read(64*1024) # Some caching
 
     def read(self, offset, size):
+        print(self)
         if not self.__tag: # Crating tag only when needed
             self.__gen_tag()
             varTag = bytearray(self.__rendered_tag)
+            print("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            print(len(varTag)/1024)
+            print("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
             self.__stream_cache+= varTag
 
         if offset == 0 and not self.__url:
@@ -462,9 +467,33 @@ class Track(object):
         if not self.__url:
             return ''
 
-        self.__stream_cache += self.__url.read(offset + size - len(self.__stream_cache))
+        #TODO: need test slow connection
+        lenDown   = len(self.__stream_cache)
+        lenTag    = len(self.__rendered_tag)#need?
+        lenRemain = (lenDown - offset - size)
+        pos       = offset + size - lenDown
 
-        return self.__stream_cache[offset:offset + size]
+
+        print("############_debugPos")
+        print("lenTag:     \t%10.3f"% (lenTag/1024))
+        print("#downloaded:\t%10.3f"% (lenDown/1024))
+        print("#pos:       \t%10.3f"% (pos/1024))
+        print("#remain:    \t%10.3f"% (lenRemain/1024))
+        print("offset:     \t%10.3f"% (offset/1024))
+        print("size:       \t%10.3f"% (size/1024))
+
+        if lenDown > offset+size:#TODO: need predownload for slow connection????
+            print("##read from cache (downloaded for now?) ")
+        else:
+            # chunck size
+            # 
+            #
+            chunk = self.__url.read(256*1024)
+            print("chunk:     \t%10.1f"% len(chunk))
+            self.__stream_cache += chunk#simply offset?#read all now? 
+            print ('downloading...')
+
+        return self.__stream_cache[offset:offset + size]#need len tas size????
 
     def close(self):
         pass

@@ -821,7 +821,7 @@ class GMusicFS(LoggingMixIn, Operations):
         return track[1].read(offset, size)
 
 
-    #TODO: need... smth... make a wrapper
+    #TODO: add file sizes... maybe add radio?
     def readdir(self, path, fh):
         artist_dir_m = self.artist_dir.match(path)
         artist_album_dir_m = self.artist_album_dir.match(path)

@@ -97,6 +97,7 @@ class Album(object):
                     self.add_track(Track(self.__library, track))
             except:
                 log.exception("Error loading album info")
+                self.__album_info = ['none']#TODO: add more try?
         return self.__tracks
 
     @property
@@ -129,7 +130,7 @@ class Album(object):
         for track in self.__tracks.values():
             self.__year = track.year or self.__year
 
-    #TODO: need check image type! custom tracks has png cover
+    #TODO: need check image type! some tracks has png cover
     def __load_art(self):
         if not self.__art_url:
             return
@@ -142,7 +143,7 @@ class Album(object):
             self.__art += data
             data = u.read()
 
-        #TODO: caching
+        #TODO: caching?
         f = open("/home/fish/img", "wb")
         f.write(self.__art)      # str() converts to string
         f.close()
@@ -156,16 +157,18 @@ class Track(object):
 
     def __init__(self, library, data):
 
+
         errorFlag = 0
+        '''
         #FISH
         if data['kind'] != 'sj#track':
             print ("\n---------------------------\nnot a track?")
         else:
-            
+
             print ("\n\n\n########################\n" + data['id'] + " - sj#track!\n")
             print (data)
             print ("########################")
-            
+        '''
 
         self.__library = library
         if 'track' in data: # Playlists manage tracks in a different way
@@ -181,7 +184,6 @@ class Track(object):
         self.__data = data
 
         #FISH
-
         #ex bad data
         '''
         {
@@ -198,6 +200,7 @@ class Track(object):
         }
 
         ########################
+
         2f902400-5eb9-3ae5-bc7b-c554664e9c1c - #NOT A TRACK!
 
         {
@@ -256,62 +259,13 @@ class Track(object):
                 'lastRatingChangeTimestamp': '1483988691991000'
             }
         }
-        ########################
-
-
-        #ex good data
-        {
-            'kind': 'sj#track',
-            'id': '9f759b7e-8aab-30d9-ab48-67bdfc7bd00d',
-            'clientId': '8ed67819-1bc3-4f9b-aff6-d407a2b91b7c',
-            'creationTimestamp': '1493610464864279',
-            'lastModifiedTimestamp': '1495531845157253',
-            'recentTimestamp': '1493610464842000',
-            'deleted': False,
-            'title': 'Rule the World',
-            'artist': 'Kamelot',
-            'composer': '',
-            'album': 'Ghost Opera: The Second Coming',
-            'albumArtist': 'Kamelot',
-            'year': 2007,
-            'trackNumber': 2,
-            'genre': 'Metal',
-            'durationMillis': '220000',
-            'albumArtRef': [
-                {
-                    'kind': 'sj#imageRef',
-                    'url': 'http://lh3.googleusercontent.com/fBMethQQloWCqOkoIWGZNRX_b-B_hhuI6U4mEoxhC930U7JBGCEkaNvmTaHkplKLbJuei_XEPg',
-                    'aspectRatio': '1',
-                    'autogen': False
-                }
-            ],
-            'artistArtRef': [
-                {
-                    'kind': 'sj#imageRef',
-                    'url': 'http://lh3.googleusercontent.com/5v7rwEcVskiwIbcubGbIRsZjzlv7PC8ArTjrVForJx4KbGX2JEfvIuY7WfyHpojcxlEH6KshjLA',
-                    'aspectRatio': '2',
-                    'autogen': False
-                }
-            ],
-            'playCount': 6,
-            'discNumber': 1,
-            'estimatedSize': '8832549',
-            'trackType': '8',
-            'storeId': 'Tqjbcpweva45farkyrlnm6vrrl4',
-            'albumId': 'Bglg6zsrdbcqb4t3omqtyhcznb4',
-            'artistId': [
-                'A7hirrnzyb5mdmdrd2avu7zmzzy'
-            ],
-            'nid': 'Tqjbcpweva45farkyrlnm6vrrl4',
-            'explicitType': '2'
-        }
         #end data
         '''
         try:
             self.__title = data['title']
         except Exception:
             errorFlag = 1
-            self.__title = ""
+            self.__title = "NO TITLE"
             print ("error in __title")
 
         try:
@@ -333,11 +287,11 @@ class Track(object):
 
 
 
-        try:
+        try:#TODO: need check names
             self.__album = self.__library.albums.get(data['albumId'], None)
         except Exception:
             errorFlag = 1
-            self.__album = ""
+            self.__album = "NO ALBUM"
             print ("error in __album")
 
         if errorFlag == 1:
@@ -390,13 +344,11 @@ class Track(object):
     def id(self):
         return self.__id
 
-    #FISH
     @property
     def number(self):
-
+        #FISH
         try:
-            numberT = self.__number
-            return numberT
+            return self.__number
         except Exception:
             print ("no track number")
             return 0
@@ -446,62 +398,99 @@ class Track(object):
         return st
 
     def _open(self):
+        print("#######file openned!")
+        print(self.__data)
         pass
         #self.__url = urllib.request.urlopen(self.__library.get_stream_url(self.id))
         #self.__stream_cache += self.__url.read(64*1024) # Some caching
 
     def read(self, offset, size):
-        print(self)
+
+
         if not self.__tag: # Crating tag only when needed
+            print("#### # # CRATE TAG")
             self.__gen_tag()
             varTag = bytearray(self.__rendered_tag)
-            print("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-            print(len(varTag)/1024)
-            print("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
             self.__stream_cache+= varTag
 
         if offset == 0 and not self.__url:
+            print('####### FIRST RUN TRACK')
             self.__url = urllib.request.urlopen(self.__library.get_stream_url(self.id))
+            self.__stream_cache+= self.__url.read(128*1024)#2 step up
+
+        #костыль
+        if offset+size+5*4096 >= int(self.__data['estimatedSize']) and len(self.__stream_cache) < (int(self.__data['estimatedSize'])/2):
+            print("\033[032moffset:     \t%10.3fK\033[0m"% (offset/1024))
+            print("estSize:    \t%10.3fK"% (int(self.__data['estimatedSize'])/1024))
+            print("хрен тебе! читай последовательно!")
+            return ''
 
 
         if not self.__url:
+            print("###not url")
             return ''
 
         #TODO: need test slow connection
-        lenDown   = len(self.__stream_cache)
         lenTag    = len(self.__rendered_tag)#need?
-        lenRemain = (lenDown - offset - size)
-        pos       = offset + size - lenDown
+        pos       = (offset + size)
 
 
-        print("############_debugPos")
-        print("lenTag:     \t%10.3f"% (lenTag/1024))
-        print("#downloaded:\t%10.3f"% (lenDown/1024))
-        print("#pos:       \t%10.3f"% (pos/1024))
-        print("#remain:    \t%10.3f"% (lenRemain/1024))
-        print("offset:     \t%10.3f"% (offset/1024))
-        print("size:       \t%10.3f"% (size/1024))
+        #костыль
+        print("\n############ debugPos")
+        print("lenTag:     \t%10.3fK"% (lenTag/1024))
+        print("#pos:       \t%10.3fK"% (pos/1024))
+        print("offset:     \t%10.3fK"% (offset/1024))
+        print("size:       \t%10.3fK"% (size/1024))
+        print("estSize:    \t%10.3fK"% (int(self.__data['estimatedSize'])/1024))
 
-        if lenDown > offset+size:#TODO: need predownload for slow connection????
-            print("##read from cache (downloaded for now?) ")
+        lenDown   = len(self.__stream_cache)-lenTag
+        diff      = lenDown-lenTag - (offset + size)
+
+
+        if lenDown-size*2 > offset+size:#TODO: move to while.... wtf is this???
+            print("#from cache...")
         else:
-            # chunck size
-            # 
-            #
-            chunk = self.__url.read(256*1024)
-            print("chunk:     \t%10.1f"% len(chunk))
-            self.__stream_cache += chunk#simply offset?#read all now? 
-            print ('downloading...')
+            iter1 = 0
+            while True:
+
+                print("\033[031m\t\t\tDownloading.. %d\033[0m" % iter1)
+                iter1+=1
+                chunk = self.__url.read(size*3)#2 step up
+                self.__stream_cache += chunk#simply offset?#read all now?
+                lenDown   = len(self.__stream_cache)-lenTag
+                diff      = lenDown-lenTag - (offset + size)
+                print("chunk:      \t%10.3fK"% (len(chunk)/1024))
+
+                if diff > 0 or len(chunk) == 0:
+                    break;
+            print("\033[031m\t\t\tDownloading..  OK! %d iterations\033[0m" % iter1)
+
+
+        lenRemain = (lenDown+lenTag - offset - size)
+        #костыль
+        print("#remain:    \t%10.3fK"% (lenRemain/1024))
+        print("diff:       \t%10.3fK"% (diff/1024))
+        print("#downloaded:\t%10.3fK"% (lenDown/1024))
+
+        if lenDown>offset:#TODO: neeed??
+            return self.__stream_cache[offset:offset + size]
+
 
         return self.__stream_cache[offset:offset + size]#need len tas size????
 
     def close(self):
-        pass
-        #if self.__url:
-        #    log.info("killing url")
-        #    self.__stream_cache = str(self.__rendered_tag or "")
-        #    self.__url.close()
-        #    self.__url = None
+        #pass
+        '''
+        if self.__url:
+            log.info("#######################################################killing url")
+            self.__stream_cache = bytes()
+
+            if self.__rendered_tag:
+                self.__stream_cache += bytearray(self.__rendered_tag)
+
+            self.__url.close()
+            self.__url = None
+        '''
 
     def __str__(self):
         return "{0.number:02d} - {0.title}.mp3".format(self)
@@ -527,10 +516,12 @@ class Playlist(object):
                     tr = self.__library.tracks[trackId]
                 else:
                     tr = Track(self.__library, track)
+                '''
                 #FISH
                 print ('#1debug')
                 print (tr)
                 print ('#1end')
+                '''
                 self.__tracks[tr.title] = tr
             except:
                 log.exception("error: {}".format(track))
@@ -647,7 +638,21 @@ class MusicLibrary(object):
 
                 if artistId not in self.__artists:
                     self.__artists[artistId] = Artist(self, track)
-                    self.__artists_by_name[str(self.__artists[artistId])] = self.__artists[artistId]
+
+                    #filter bad characters
+                    artistId2 = str(self.__artists[artistId]).strip().replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
+
+                    if not artistId2:
+                        artistId2 = "NO_ARTIST"#dupes? self.__artists_by_name[artistId2]+=???
+
+                    if artistId2[len(artistId2)-1] == ".":
+                        artistId2+= "_"
+
+                    while artistId2 in self.__artists_by_name:
+                        artistId2+="_"
+                    #end filter
+
+                    self.__artists_by_name[artistId2] = self.__artists[artistId]
                 artist = self.__artists[artistId]
 
                 if 'albumId' not in track:
@@ -655,7 +660,7 @@ class MusicLibrary(object):
 
                 albumId = track['albumId']
                 if albumId not in self.__albums:
-                    self.__albums[albumId] = Album(self, track)
+                    self.__albums[albumId] = Album(self, track)#TODO: check characters in albums
                     artist.add_album(self.__albums[albumId])
                 album = self.__albums[albumId]
 
@@ -669,9 +674,17 @@ class MusicLibrary(object):
 
         playlists = self.api.get_all_user_playlist_contents()
         for pl in playlists:
-            if pl['name']:
+
+            name = str(pl['name']).strip().replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_")
+            if name[len(name)-1] == ".":
+                name+= "_"
+            while name in self.__playlists:
+                name+="_"
+
+
+            if name:
                 try:
-                    self.__playlists[pl['name']] = Playlist(self, pl)
+                    self.__playlists[name] = Playlist(self, pl)
                 except:
                     log.exception("Error loading playlist: {}".format(pl))
                     errors += 1
@@ -764,7 +777,7 @@ class GMusicFS(LoggingMixIn, Operations):
         return st
 
     def open(self, path, fh):
-        #log.info("open: {} ({})".format(path, fh))
+        log.info("open: {} ({})".format(path, fh))
         artist_album_track_m = self.artist_album_track.match(path)
         playlist_track_m = self.playlist_track.match(path)
 
@@ -789,7 +802,7 @@ class GMusicFS(LoggingMixIn, Operations):
         return fh
 
     def release(self, path, fh):
-        #log.info("release: {} ({})".format(path, fh))
+        log.info("release: {} ({})".format(path, fh))
         key = path + "-" + str(fh)
         track = self.__opened_tracks.get(key, None)
         if not track:
@@ -799,7 +812,7 @@ class GMusicFS(LoggingMixIn, Operations):
             track[1].close()
 
     def read(self, path, size, offset, fh):
-        #log.info("read: {} offset: {} size: {} ({})".format(path, offset, size, fh))
+        log.info("read: {} offset: {} size: {} ({})".format(path, offset, size, fh))
         key = path + "-" + str(fh)
         track = self.__opened_tracks.get(key, None)
         if track is None:
@@ -819,25 +832,14 @@ class GMusicFS(LoggingMixIn, Operations):
 
         elif path == '/artists':#TODO: neeed filter bad characters
             listTMP = list(self.library.artists_by_name.keys())
-
-            for index, item in enumerate(listTMP):
-                tmpVar2 = str(item.encode('ascii', 'ignore').decode())#pease of shit
-                listTMP[index] = tmpVar2
-
-            try:
-                listTMP.remove('')
-            except Exception:
-                print("not has ''")
-
-
-
-            listTMP.sort()
-            listTMP = set(listTMP)
-            print(listTMP)
-            return  ['.','..'] + listTMP
+            print(listTMP)#TODO: remove
+            listTMP = ['.','..'] + listTMP
+            return  listTMP
 
         elif path == '/playlists':
-            return  ['.','..'] + list(self.library.playlists.keys())
+            playlistTMP = ['.','..'] + list(self.library.playlists.keys())
+            print(playlistTMP)#TODO: remove
+            return  playlistTMP
 
         elif artist_dir_m:
             # Artist directory, lists albums.
@@ -865,6 +867,7 @@ class GMusicFS(LoggingMixIn, Operations):
             print(path)
             print("fh:")
             print(fh)
+
         return ['.', '..']
 
 

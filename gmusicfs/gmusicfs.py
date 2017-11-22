@@ -11,6 +11,7 @@ import argparse
 import tempfile
 import logging
 import pprint
+import inspect
 
 from eyed3.id3 import Tag, ID3_V2_4
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn#, fuse_get_context
@@ -28,7 +29,8 @@ pp = pprint.PrettyPrinter(indent=4)  # For debug logging
 ALBUM_REGEX = '(?P<album>[^/]+) \((?P<year>[0-9]{4})\)'
 ALBUM_FORMAT = u'{name} ({year:04d})'
 
-TRACK_REGEX = '(?P<track>(?P<number>[0-9]+) - (?P<title>.*)\.mp3)'
+TRACK_REGEX = '(?P<trartist>[^-]*) - ((?P<title>.*) - (?P<track>(?P<number>[0-9]+))\.mp3)'
+#TODO: check:
 TRACK_FORMAT = '{number:02d} - {name}.mp3'
 
 ID3V1_TRAILER_SIZE = 128
@@ -68,6 +70,9 @@ class Artist(object):
     def __str__(self):
         return "{0.name}".format(self)
 
+
+
+
 class Album(object):
 
     def __init__(self, library, data):
@@ -102,6 +107,9 @@ class Album(object):
 
     @property
     def title(self):
+        self.__title = self.__title.strip()
+        if self.__title == "":
+            self.__title = "Unknown Album"
         return self.__title
 
     @property
@@ -143,10 +151,12 @@ class Album(object):
             self.__art += data
             data = u.read()
 
+        '''
         #TODO: caching?
         f = open("/home/fish/img", "wb")
         f.write(self.__art)      # str() converts to string
         f.close()
+        '''
 
         log.info("loading art album: {0.title}".format(self)+" done!")
 
@@ -265,8 +275,10 @@ class Track(object):
             self.__title = data['title']
         except Exception:
             errorFlag = 1
-            self.__title = "NO TITLE"
+            self.__title = "NO TITLE - "+ self.__id #16407c25-ab08-3551-92f7-7c452b3ecdd4
             print ("error in __title")
+            print (data)
+            print (data)
 
         try:
             self.__number = int(data['trackNumber'])
@@ -309,8 +321,8 @@ class Track(object):
     def __gen_tag(self):
         log.info("Creating tag idv3...")
         self.__tag = Tag()
-        self.__tag.album = self.__data['album']
-        self.__tag.artist = self.__data['artist']
+        self.__tag.album = "empty"
+        self.__tag.artist = "empty artist"
 
         if 'album' in self.__data:
             self.__tag.album = self.__data['album']
@@ -329,8 +341,9 @@ class Track(object):
         if 'year' in self.__data and int(self.__data['year']) != 0:
             self.__tag.recording_date = self.__data['year']
 
-        if self.album and self.album.art:
+        if inspect.isclass(self.album) and self.album.art:
             self.__tag.images.set(0x03, self.album.art, 'image/jpeg', u'Front cover')
+            print("GGGGGGGGGGGGGGOOOOOOOOOOOOOOOOOOOOTTTTTTTTTTTT ARRRRRRRRRRRRRRRRRRT ART")
 
         tmpfd, tmpfile = tempfile.mkstemp()
         os.close(tmpfd)
@@ -356,11 +369,16 @@ class Track(object):
 
     @property
     def title(self):
-        return self.__title
+        return self.__title.strip().replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
+
+
+    @property
+    def artist(self):
+        return self.__data['artist'].strip().replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
 
     @property
     def album(self):
-        return self.__album
+        return self.__album.strip().replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
 
     @property
     def year(self):
@@ -389,7 +407,7 @@ class Track(object):
             else:
                 print("####tagSize... wtf?")
                 st['st_size'] = 0
-                st['st_mode'] = (S_IFREG | 0o000)
+                #t['st_mode'] = (S_IFREG | 0o000)
 
         if 'creationTimestamp' in self.__data:
             st['st_ctime'] = st['st_mtime'] = int(self.__data['creationTimestamp']) / 1000000
@@ -407,6 +425,15 @@ class Track(object):
     def read(self, offset, size):
 
 
+        #костыль
+        estimatedSize_test = 10240
+
+        if 'estimatedSize' in self.__data:
+            estimatedSize_test = self.__data['estimatedSize']
+        else:
+            print("ИНЖАЛИД ТРАК, НАХЕР ЕГО")
+            return;#TODO: skip invalid tracks
+
         if not self.__tag: # Crating tag only when needed
             print("#### # # CRATE TAG")
             self.__gen_tag()
@@ -415,13 +442,15 @@ class Track(object):
 
         if offset == 0 and not self.__url:
             print('####### FIRST RUN TRACK')
+            print(self)
+            print(self.id)
+            print("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             self.__url = urllib.request.urlopen(self.__library.get_stream_url(self.id))
             self.__stream_cache+= self.__url.read(128*1024)#2 step up
 
-        #костыль
-        if offset+size+5*4096 >= int(self.__data['estimatedSize']) and len(self.__stream_cache) < (int(self.__data['estimatedSize'])/2):
+        if offset+size+5*4096 >= int(estimatedSize_test) and len(self.__stream_cache) < (int(estimatedSize_test)/2):
             print("\033[032moffset:     \t%10.3fK\033[0m"% (offset/1024))
-            print("estSize:    \t%10.3fK"% (int(self.__data['estimatedSize'])/1024))
+            print("estSize:    \t%10.3fK"% (int(estimatedSize_test)/1024))
             print("хрен тебе! читай последовательно!")
             return ''
 
@@ -436,13 +465,14 @@ class Track(object):
 
 
         #костыль
+        '''
         print("\n############ debugPos")
         print("lenTag:     \t%10.3fK"% (lenTag/1024))
         print("#pos:       \t%10.3fK"% (pos/1024))
         print("offset:     \t%10.3fK"% (offset/1024))
         print("size:       \t%10.3fK"% (size/1024))
         print("estSize:    \t%10.3fK"% (int(self.__data['estimatedSize'])/1024))
-
+        '''
         lenDown   = len(self.__stream_cache)-lenTag
         diff      = lenDown-lenTag - (offset + size)
 
@@ -453,9 +483,9 @@ class Track(object):
             iter1 = 0
             while True:
 
-                print("\033[031m\t\t\tDownloading.. %d\033[0m" % iter1)
+                print("\033[031m\t\t\tDownloading.. %d chunk\033[0m" % iter1)
                 iter1+=1
-                chunk = self.__url.read(size*3)#2 step up
+                chunk = self.__url.read(size*10)#2 step up
                 self.__stream_cache += chunk#simply offset?#read all now?
                 lenDown   = len(self.__stream_cache)-lenTag
                 diff      = lenDown-lenTag - (offset + size)
@@ -463,7 +493,7 @@ class Track(object):
 
                 if diff > 0 or len(chunk) == 0:
                     break;
-            print("\033[031m\t\t\tDownloading..  OK! %d iterations\033[0m" % iter1)
+            print("\033[031m\t\t\tDownloading..  OK! %d chunks\033[0m" % iter1)
 
 
         lenRemain = (lenDown+lenTag - offset - size)
@@ -493,7 +523,7 @@ class Track(object):
         '''
 
     def __str__(self):
-        return "{0.number:02d} - {0.title}.mp3".format(self)
+        return "{0.artist} - {0.title} - {0.number:02d}.mp3".format(self)
 
 class Playlist(object):
     """This class manages playlist information"""
@@ -506,6 +536,7 @@ class Playlist(object):
 
 
         for track in data['tracks']:
+            #track['track']['title'] = track['track']['title'].replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
             trackId = track['trackId']
             try:
                 if 'track' in track:
@@ -516,12 +547,71 @@ class Playlist(object):
                     tr = self.__library.tracks[trackId]
                 else:
                     tr = Track(self.__library, track)
-                '''
+
                 #FISH
                 print ('#1debug')
                 print (tr)
                 print ('#1end')
+                print(track)
                 '''
+    {
+       'kind': 'sj#playlistEntry',
+       'id': '1da3901e-c701-32e5-ab71-553f180f1d6d',
+       'clientId': '69fa3a44-dccd-4c01-8e89-d6a8890abbba',
+       'playlistId': '7399de6e-95f4-4151-bb18-7d70227177f5',
+       'absolutePosition': '01395944918664833489',
+       'trackId': 'T5vo6lssvi27dqbrswe3a3lrjki',
+       'creationTimestamp': '1511126534032141',
+       'lastModifiedTimestamp': '1511126534032141',
+       'deleted': False,
+       'source': '2',
+       'track': {
+           'kind': 'sj#track',
+           'title': 'Brave Shine (Full ver.)',
+           'artist': 'Sapphire',
+           'composer': '',
+           'album': 'Brave Shine (Fate/Stay Night: Unlimited Blade Works)',
+           'albumArtist': 'Sapphire',
+           'year': 2015,
+           'trackNumber': 1,
+           'genre': 'Pop',
+           'durationMillis': '230000',
+           'albumArtRef': [{
+               'kind': 'sj#imageRef',
+               'url': 'http://lh3.googleusercontent.com/szj2L71PZrr7ovfeGyo8ULjhMNeLA3BaeT37nxAFijbeipxxU-5FW2tn3CqPD1W3Os3uRNCW7A',
+               'aspectRatio': '1',
+               'autogen': False
+           }],
+           'artistArtRef': [{
+               'kind': 'sj#imageRef',
+               'url': 'http://lh3.googleusercontent.com/cl3SC__eFcXFxovDOrBDcMiRuCqqXPsdvj66iI_ppaa1uG-KIudwhZnQsj1wj3dHszAkrciZ',
+               'aspectRatio': '2',
+               'autogen': True
+           }, {
+               'kind': 'sj#imageRef',
+               'url': 'http://lh3.googleusercontent.com/vMFjfI99Og9sj5p5pDhga5X5ZlrT3R0vc57F9jf8GSPXmmD__z0G4kuNd1-fPNse7uAa7NmqJQ',
+               'aspectRatio': '1',
+               'autogen': True
+           }],
+           'playCount': 14,
+           'discNumber': 1,
+           'rating': '5',
+           'estimatedSize': '9229610',
+           'trackType': '7',
+           'storeId': 'T5vo6lssvi27dqbrswe3a3lrjki',
+           'albumId': 'Bps6iuywtvys4lncs44wam72uji',
+           'artistId': ['Awc7cvnop7mcshrnhiwso6vvsxm', 'Axijup2thuk3hf64lzw7v6jdune'],
+           'nid': '5vo6lssvi27dqbrswe3a3lrjki',
+           'trackAvailableForSubscription': True,
+           'trackAvailableForPurchase': True,
+           'albumAvailableForPurchase': False,
+           'explicitType': '2',
+           'lastRatingChangeTimestamp': '1503681621935000'
+       }
+   }
+                '''
+                #tr.album = tr.album.replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
+                #tr.title = tr.title.replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
                 self.__tracks[tr.title] = tr
             except:
                 log.exception("error: {}".format(track))
@@ -610,7 +700,10 @@ class MusicLibrary(object):
         self.__populate_library()
 
     def get_stream_url(self, trackId):
+        print("URL:")
+        #print(self.__data)
         url = self.api.get_stream_url(trackId)
+        print(url)
         return url
 
     def __populate_library(self):
@@ -621,8 +714,11 @@ class MusicLibrary(object):
             try:
                 log.debug('track = %s' % pp.pformat(track))
 
+                track['artist'] = track['artist'].replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
+
                 if 'artistId' not in track:
                     track['artistId'] = track['artist'] # if we don't have an artistID, use the name as the id
+
 
                 if not track['artistId']:
                     print ("#artistID is empty")
@@ -655,16 +751,35 @@ class MusicLibrary(object):
                     self.__artists_by_name[artistId2] = self.__artists[artistId]
                 artist = self.__artists[artistId]
 
+                #does no work?
+                track['title'] = track['title'].replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
+
                 if 'albumId' not in track:
                     track['albumId'] = track['title']
 
-                albumId = track['albumId']
+                albumId = track['albumId'] #ex: albumId(track['albumId']): Bvbzjsuvtuip7vtjigtt3pb7dk4,
+
                 if albumId not in self.__albums:
                     self.__albums[albumId] = Album(self, track)#TODO: check characters in albums
                     artist.add_album(self.__albums[albumId])
-                album = self.__albums[albumId]
 
+                print("##########------")
+                print("########## albumId:" + albumId + ", track['title']: " + track['title'])
+                print("##########------")
+
+                self.__albums[albumId] = self.__albums[albumId]
+                album = self.__albums[albumId]
+                print("##########------")
+                print("########## album:")
+                print(album)
+                print("##########------")
+
+                self.__albums[albumId] = Album(self, track)#TODO: check characters in albums
                 track = Track(self, track)
+                print("##########------")
+                print("########## track:")
+                print(track)
+                print("##########------")
                 if track.id not in self.__tracks:
                     self.__tracks[track.id] = track
                     album.add_track(track)
@@ -712,7 +827,13 @@ class GMusicFS(LoggingMixIn, Operations):
 
         self.playlist_dir = re.compile('^/playlists/(?P<playlist>[^/]+)$')
         #self.playlist_track = re.compile('^/playlists/(?P<playlist>[^/]+)/(?P<track>[^/]+\.mp3)$')
-        self.playlist_track = re.compile('^/playlists/(?P<playlist>[^/]+)/(?P<track>(?P<number>[0-9]+) - (?P<title>.*)\.mp3)$')
+        #Rena Uehara - Todokanai Koi - 13 .mp3
+        #self.playlist_track = re.compile('^/playlists/(?P<playlist>[^/]+)/(?P<artist> - (?P<title>.*) - (?P<number>[0-9]+)\.mp3)$')
+        #self.playlist_track = re.compile('^/playlists/(?P<playlist>[^/]+)/(?P<track>(?P<number>[0-9]+) - (?P<title>.*)\.mp3)$')
+        PLAYLIST_REGEX = '^/playlists/(?P<playlist>[^/]+)/'+TRACK_REGEX+'$'
+        self.playlist_track = re.compile(PLAYLIST_REGEX)
+        print(PLAYLIST_REGEX)
+
 
         self.__opened_tracks = {}  # path -> urllib2_obj
 
@@ -739,6 +860,7 @@ class GMusicFS(LoggingMixIn, Operations):
         date = 0  # Make the date really old, so that cp -u works correctly.
         st['st_ctime'] = st['st_mtime'] = st['st_atime'] = date
 
+        parts = "";
         if path == '/':
             pass
         elif path == '/artists':
@@ -749,29 +871,45 @@ class GMusicFS(LoggingMixIn, Operations):
             pass
         elif artist_album_dir_m:
             parts = artist_album_dir_m.groupdict()
+            print("parts artist_album_dir_m:")
+            print(parts)
             artist = self.library.artists_by_name[parts['artist']]
             album = artist.albums[parts['album']]
             st['st_size'] = len(artist.albums)
+            print("############### I ADD DIRECTORY SIZE")
 
         elif artist_album_track_m:
             parts = artist_album_track_m.groupdict()
+            print("parts artist_album_track_m:")
+            print(parts)
             artist = self.library.artists_by_name[parts['artist']]
             album = artist.albums[parts['album']]
             track = album.tracks[parts['title']]
+            print("############### artist_album_track_m I RETURN TRACK ATTR!")
             return track.get_attr()
 
         elif playlist_dir_m:
             pass
-
         elif playlist_track_m:
             parts = playlist_track_m.groupdict()
+            print("parts playlist_track_m:")
+            print(parts)
             playlist = self.library.playlists[parts['playlist']]
-            if parts['title'] in playlist.tracks:
+            #TODO: revert checking
+            #if parts['title'] in playlist.tracks:
+            if parts['title']:
+                print("############### playlist_track_m I RETURN ATTR!")
                 track = playlist.tracks[parts['title']]
+                #print(playlist.tracks)
                 return track.get_attr()
             else:
+                print("############### playlist_track_m I RETURN XYU (st)")
+                print(playlist.tracks)
                 return st
         else:
+            print("############### i return FUSE ERROR")
+            print(path)
+            print(parts)
             raise FuseOSError(ENOENT)
 
         return st

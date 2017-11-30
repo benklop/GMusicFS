@@ -1,43 +1,47 @@
 #!/usr/bin/env python3
 
+import argparse
+import configparser
+import inspect
+import logging
 import os
+import pprint
 import re
 import sys
+import tempfile
+import traceback
 import urllib
-import configparser as ConfigParser
 from errno import ENOENT
 from stat import S_IFDIR, S_IFREG
-import argparse
-import tempfile
-import logging
-import pprint
-import inspect
 
 from eyed3.id3 import Tag, ID3_V2_4
-from fuse import FUSE, FuseOSError, Operations, LoggingMixIn#, fuse_get_context
-#import gmusicapi.exceptions
+from fuse2 import FUSE, FuseOSError, Operations, LoggingMixIn
+
+import gmusicapi.exceptions
+
 from gmusicapi import Mobileclient as GoogleMusicAPI
 #from gmusicapi import Webclient as GoogleMusicWebAPI
 
-#reload(sys)  # Reload does the trick
-#sys.setdefaultencoding('UTF-8')
-
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger('gmusicfs')
-pp = pprint.PrettyPrinter(indent=4)  # For debug logging
+pp = pprint.PrettyPrinter(indent=2)  # For debug logging
 
-ALBUM_REGEX = '(?P<album>[^/]+) \((?P<year>[0-9]{4})\)'
-ALBUM_FORMAT = u'{name} ({year:04d})'
+ALBUM_REGEX  = '(?P<album>[^/]+) \((?P<year>[0-9]{4})\)'
+ALBUM_FORMAT = "{0.title_printable} ({0.year:04d})"
 
-TRACK_REGEX = '(?P<trartist>[^-]*) - ((?P<title>.*) - (?P<track>(?P<number>[0-9]+))\.mp3)'
-#TODO: check:
-TRACK_FORMAT = '{number:02d} - {name}.mp3'
+# TODO: check:
+TRACK_REGEX  = '(?P<disc>[0-9]+)-(?P<track>(?P<number>[0-9]+)) - (?P<trartist>.+?) - ((?P<title>.*)\.mp3)'
+TRACK_FORMAT = "{0.disk:02d}-{0.number:02d} - {0.artist_printable} - {0.title_printable}.mp3"
 
 ID3V1_TRAILER_SIZE = 128
 
-def formatNames(string_from):
+NO_ALBUM_TITLE  = "No Album"
+NO_ARTIST_TITLE = "No Artist"
+
+
+def format_to_path(string_from):
     """Format a name to make it suitable to use as a filename"""
-    return re.sub('/', '-', string_from)
+    return re.sub('[^\w0-9_\.!?#@$ ]+', '_', string_from.strip().lower())
 
 
 class NoCredentialException(Exception):
@@ -45,12 +49,29 @@ class NoCredentialException(Exception):
 
 
 class Artist(object):
-
-    def __init__(self, library, data):
+    def __init__(self, library, data, name = None):
         self.__library = library
-        self.__id = data['artistId'][0]
-        self.__name = data['artist']
-        self.__albums = {}
+        self.__albums  = {}
+        self.__data    = data
+
+        # name
+        if name == None and 'artist' in data:
+            self.__name = data['artist']
+        elif name != None:
+            self.__name = name
+        else:
+            self.__name = NO_ARTIST_TITLE
+
+        # name_printable
+        self.__name_printable = format_to_path(self.__name)
+
+        # artist_id
+        if 'artistId' in data:
+            self.__id = data['artistId']
+        else:
+            self.__id = self.__name
+
+
 
     @property
     def id(self):
@@ -61,33 +82,92 @@ class Artist(object):
         return self.__name
 
     @property
+    def name_printable(self):
+        return self.__name_printable
+
+    @property
     def albums(self):
         return self.__albums
 
     def add_album(self, album):
-        self.__albums[album.title] = album
+        #TODO: надо что то с этим делать, добавление альбомов... а хер с ним с уникальным именем пусть будут
+        tmp_title = album.title_printable
+        while tmp_title in self.__albums:  # костыль для добавления разных альбомов по ID, но с одинаковыми названиями
+            print("# ALERT! album " + tmp_title + " already exists in artist?")
+            tmp_title += "_"
 
+        self.__albums[album.title_printable] = album
+        print("# albumTitle:" + album.title_printable)
+
+    #TODO: check it
     def __str__(self):
-        return "{0.name}".format(self)
-
-
+        return "{0.name_printable}".format(self)
 
 
 class Album(object):
 
+
     def __init__(self, library, data):
-        self.__library = library
-        self.__id = data['albumId']
-        self.__artist = self.__library.artists.get(data['artistId'][0], None)
-        self.__title = data['album']
-        self.__tracks = {}
-        self.__year = 0
+        self.__library    = library
+        self.__data       = data
+        self.__tracks     = {}
+        self.__artists    = {}
+        self.__art        = None
+        self.__album_info = None
+
+        # album_title
+        if 'album' in data and  data['album'].strip() != "":
+            self.__album_title = data['album']
+        else:
+            self.__album_title = NO_ALBUM_TITLE
+
+        # album_title_printable
+        self.__album_title_printable = format_to_path(self.__album_title)
+
+        # album_artist ## self.__artist = self.__library.artists.get(data['artistId'][0], None)
+        if 'albumArtist' in data and data['albumArtist'].strip() != "":
+            self.__album_artist = data['albumArtist']
+        elif 'artist' in data and data['artist'].strip() != "":
+            self.__album_artist = data['artist']
+        else:
+            self.__album_artist = NO_ARTIST_TITLE
+
+        # album_artist_printable
+        self.__album_artist_printable = format_to_path(self.__album_artist)
+
+        # album_id
+        if 'albumId' in data:
+            self.__id = data['albumId']
+        elif format_to_path(self.__album_title) == format_to_path(NO_ALBUM_TITLE):
+            self.__id = self.__album_title + self.__album_artist #TODO: check it
+        else:
+            self.__id = self.__album_title
+
+        # year
+        if 'year' in data:
+            self.__year = data['year']
+        else:
+            self.__year = 0
+
         if 'albumArtRef' in data:
             self.__art_url = data['albumArtRef'][0]['url']
         else:
             self.__art_url = None
-        self.__art = None
-        self.__album_info = None
+
+        if 'artist' in data:
+            self.__artist = data['artist']
+        else:
+            self.__artist = self.__album_artist
+
+        if 'artistId' in data:
+            self.__artistId = data['artistId']
+        else:
+            self.__artistId = self.__album_artist
+
+
+
+
+
 
     @property
     def id(self):
@@ -95,22 +175,27 @@ class Album(object):
 
     @property
     def tracks(self):
-        if not self.__album_info: # Load all the tracks only on request
+        """
+        if not self.__album_info:  # Load all the tracks only on request
+
             try:
                 self.__album_info = self.__library.api.get_album_info(self.__id)
+                #TODO: нахуя мне треки лишние? я добавлял только несколько! А вообще надо ли это инфо получать?
                 for track in self.__album_info['tracks']:
                     self.add_track(Track(self.__library, track))
             except:
                 log.exception("Error loading album info")
-                self.__album_info = ['none']#TODO: add more try?
+                self.__album_info = ['none']  # TODO: add more try?
+        """
         return self.__tracks
 
     @property
     def title(self):
-        self.__title = self.__title.strip()
-        if self.__title == "":
-            self.__title = "Unknown Album"
-        return self.__title
+        return self.__album_title
+
+    @property
+    def title_printable(self):
+        return self.__album_title_printable
 
     @property
     def year(self):
@@ -119,8 +204,12 @@ class Album(object):
         return self.__year
 
     @property
-    def artist(self):
-        return self.__artist
+    def album_artist(self):
+        return self.__album_artist
+
+    @property
+    def album_artist_printable(self):
+        return self.__album_artist_printable
 
     @property
     def art(self):
@@ -129,23 +218,26 @@ class Album(object):
         return self.__art
 
     def add_track(self, track):
-        self.__tracks[track.title] = track
-        if track.id not in self.__library.tracks:
+        self.__tracks[str(track)] = track
+        if track.id not in self.__library.tracks: #TODO: may be from playlists check it
             self.__library.tracks[track.id] = track
+
+    def add_artist(self, artist):
+        self.__artists[artist.name_printable] = artist
 
     def __get_year(self):
         # some tracks are not loaded from album_info, let's use them to get the album date release
         for track in self.__tracks.values():
             self.__year = track.year or self.__year
 
-    #TODO: need check image type! some tracks has png cover
+    # TODO: need check image type! some tracks has png cover
     def __load_art(self):
         if not self.__art_url:
             return
         log.info("loading art album: {0.title}".format(self))
         self.__art = bytes()
         u = urllib.request.urlopen(self.__art_url)
-        #TODO: wtf?
+        # TODO: wtf?
         data = u.read()
         while data:
             self.__art += data
@@ -158,193 +250,204 @@ class Album(object):
         f.close()
         '''
 
-        log.info("loading art album: {0.title}".format(self)+" done!")
+        log.info("loading art album: {0.album_title}".format(self) + " done!")
 
     def __str__(self):
-        return "{0.title} ({0.year:04d})".format(self)
+        title2 = ALBUM_FORMAT.format(self)
+        return title2
+
 
 class Track(object):
 
+
+
+    @property
+    def id(self):
+        return self.__id
+
+    @property
+    def title(self):
+        return self.__title.strip()
+
+    @property
+    def title_printable(self):
+        return self.__title_printable
+
+    @property
+    def number(self):
+        return self.__number
+
+    @property
+    def disk(self):
+        return self.__disc
+
+    @property
+    def album(self):
+        return self.__album
+
+    @property
+    def album_printable(self):
+        return self.__album_printable
+
+    @property
+    def artist(self):
+        return self.__artist
+
+    @property
+    def artist_printable(self):
+        return self.__artist_printable
+
+    @property
+    def album_artist(self):
+        return self.__album_artist
+
+    @property
+    def album_artist_printable(self):
+        return self.__album_artist_printable
+
+    @property
+    def year(self):
+        return self.__year
+
+
+
     def __init__(self, library, data):
+        self.__library      = library
+        self.__data         = data
 
-
-        errorFlag = 0
-        '''
-        #FISH
-        if data['kind'] != 'sj#track':
-            print ("\n---------------------------\nnot a track?")
-        else:
-
-            print ("\n\n\n########################\n" + data['id'] + " - sj#track!\n")
-            print (data)
-            print ("########################")
-        '''
-
-        self.__library = library
-        if 'track' in data: # Playlists manage tracks in a different way
-            self.__id = data['trackId']
-            data = data['track']
-        elif 'id' in data:
-            self.__id = data['id']
-        elif 'storeId' in data:
-            self.__id = data['storeId']
-        else:
-            self.__id = data['nid']
-
-        self.__data = data
-
-        #FISH
-        #ex bad data
-        '''
-        {
-            'kind': 'sj#playlistEntry',
-            'id': '147b7887-2f6a-38b0-9d0e-4168fa881aed',
-            'clientId': 'e3159570-6473-4ee0-b437-5ee7d2c73650',
-            'playlistId': '558a40fe-4e64-434f-b90f-72185bae5e66',
-            'absolutePosition': '01503059504007927071',
-            'trackId': '6e8d33df-b04c-3b99-b6b3-dc38cb40f609',
-            'creationTimestamp': '1481614791376812',
-            'lastModifiedTimestamp': '1481614791376812',
-            'deleted': False,
-            'source': '1'
-        }
-
-        ########################
-
-        2f902400-5eb9-3ae5-bc7b-c554664e9c1c - #NOT A TRACK!
-
-        {
-            'kind': 'sj#playlistEntry',
-            'id': '2f902400-5eb9-3ae5-bc7b-c554664e9c1c',
-            'clientId': '821a5d33-67dd-4b69-b706-add338c44167',
-            'playlistId': 'd6303ffa-5c5b-4b0a-b38f-54fe1e755f02',
-            'absolutePosition': '02017612633061982205',
-            'trackId': 'Tgarv4vwobsxyxtsott6p4qok5q',
-            'creationTimestamp': '1491432379665824',
-            'lastModifiedTimestamp': '1491432379665824',
-            'deleted': False,
-            'source': '2',
-            'track': {
-                'kind': 'sj#track',
-                'title': 'Creep',
-                'artist': 'Radiohead',
-                'composer': '',
-                'album': 'Pablo Honey',
-                'albumArtist': 'Radiohead',
-                'year': 1993,
-                'trackNumber': 2,
-                'genre': "'90s Alternative",
-                'durationMillis': '238000',
-                'albumArtRef': [
-                    {
-                        'kind': 'sj#imageRef',
-                        'url': 'http://lh3.googleusercontent.com/S7EzegIDPI54OwPL9-KNd4hIn2jDZOosfMOh6gVpyEBs397rk33UjqZh9s9IhFlbcROF3CtC',
-                        'aspectRatio': '1',
-                        'autogen': False
-                    }
-                ],
-                 'artistArtRef': [
-                    {
-                        'kind': 'sj#imageRef',
-                        'url': 'http://lh3.googleusercontent.com/53cYhGcuBl6tJh4NAsrkxHW2dYReUv27bwrA1nb_KNCrgIKeGjhfl-NmUzsu6mJGoyg1UBuvpDM',
-                        'aspectRatio': '2',
-                        'autogen': False
-                    }
-                ],
-                'playCount': 11,
-                'discNumber': 1,
-                'rating': '5',
-                'estimatedSize': '9548304',
-                'trackType': '7',
-                'storeId': 'Tgarv4vwobsxyxtsott6p4qok5q',
-                'albumId': 'Bgpaifizbaqexiz7gbmlga35c6a',
-                'artistId': ['
-                    A3qpbllyfot4yhqo7isoomtctli'
-                ],
-                'nid': 'garv4vwobsxyxtsott6p4qok5q',
-                'trackAvailableForSubscription': True,
-                'trackAvailableForPurchase': True,
-                'albumAvailableForPurchase': False,
-                'explicitType': '1',
-                'lastRatingChangeTimestamp': '1483988691991000'
-            }
-        }
-        #end data
-        '''
-        try:
-            self.__title = data['title']
-        except Exception:
-            errorFlag = 1
-            self.__title = "NO TITLE - "+ self.__id #16407c25-ab08-3551-92f7-7c452b3ecdd4
-            print ("error in __title")
-            print (data)
-            print (data)
-
-        try:
-            self.__number = int(data['trackNumber'])
-        except Exception:
-            errorFlag = 1
-            self.__number = 0;
-            print ("error in __number")
-
-
-
-        try:
-            self.__year = int(data.get('year', 0))
-        except Exception:
-            errorFlag = 1
-            self.__year = 0
-            print ("error in __year")
-
-
-
-
-        try:#TODO: need check names
-            self.__album = self.__library.albums.get(data['albumId'], None)
-        except Exception:
-            errorFlag = 1
-            self.__album = "NO ALBUM"
-            print ("error in __album")
-
-        if errorFlag == 1:
-            print ("########################\n" + data['id'] + " - #NOT A TRACK!\n")
-            print (data)
-            print ("########################\n---------------------------------------")
-
-
-        self.__url = None
-
+        self.__artists      = {}
+        self.__albums       = {}
+        self.__stream_url   = None
         self.__stream_cache = bytes()
         self.__rendered_tag = bytes()
-        self.__tag = None
+        self.__tag          = None
+
+        # TODO: надо разобраться где это юзается
+        # track_id
+        if 'track' in data:
+            self.__id = data['trackId']
+            print("# track use trackId")
+        elif 'id' in data:
+            self.__id = data['id']
+            print("# track use id")
+        elif 'storeId' in data:
+            self.__id = data['storeId']
+            print("# track use storeId")
+        else:
+            self.__id = data['nid']
+            print("# track use nid")
+
+        # track_title
+        if 'title' in data:
+            self.__title = data['title']
+        else:
+            self.__title = "unknown_track_" + data['id']
+            print("# track has no title")
+
+        # track_title_printable
+        self.__title_printable = format_to_path(self.__title)
+
+        # track_number
+        if 'trackNumber' in data:
+            self.__number = data['trackNumber']
+        else:
+            self.__number = 0
+            print("# track has no track num")
+
+
+        #track_disk
+        if 'discNumber' in data:
+            self.__disc = data['discNumber']
+        else:
+            self.__disc = 0
+            print("# track has no discNumber")
+
+
+        #track_artist
+        if 'artist' in data and data['artist'].strip() != "":
+            self.__artist = data['artist']
+        elif 'albumArtist' in data and data['albumArtist'].strip() != "":
+            self.__artist = data['albumArtist']
+            print("# track artist from albumArtist")#TODO: needed??
+        else:
+            self.__artist = NO_ARTIST_TITLE
+            print("# track has no artist")
+
+        #track_artist_printable
+        self.__artist_printable = format_to_path(self.__artist)
+
+
+        #track_album
+        if 'album' in data and data['album'].strip() != "":
+            self.__album = data['album']
+        else:
+            self.__album = NO_ALBUM_TITLE
+            print("# track has no album")
+
+        #track_artist_printable
+        self.__album_printable = format_to_path(self.__album)
+
+        #album_artist
+        if 'albumArtist' in data and data['albumArtist'].strip() != "":
+            self.__album_artist = data['albumArtist']
+        else:
+            self.__album_artist = ""
+            print("# track has no albumArtist")
+
+        #track_artist_printable
+        self.__album_artist_printable = format_to_path(self.__album_artist)
+
+
+        if 'year' in data:
+            self.__year = data['year']
+        else:
+            self.__year = 0
+            print("# track has no year")
+
+
+        # TODO: need check names
+        """
+            self.__album = self.__library.albums.get(data['albumId'], None)
+        except Exception:
+            error_flag = 1
+            self.__album = NO_ALBUM_TITLE
+            print("error in __album")
+        """
+
+
+
+    def add_album(self, album):#TODO: check before insert? may be move outside check in class????
+        self.__albums[album.title_printable] = album
+
+    def add_artist(self, artist):#TODO: check before insert? may be move outside check in class????
+        self.__artists[artist.name_printable] = artist
 
     def __gen_tag(self):
         log.info("Creating tag idv3...")
         self.__tag = Tag()
-        self.__tag.album = "empty"
-        self.__tag.artist = "empty artist"
+        self.__tag.album     = self.album
+        self.__tag.artist    = self.artist
+        self.__tag.title     = self.title
+        self.__tag.disc_num  = int(self.disk)
+        self.__tag.track_num = int(self.number)
 
-        if 'album' in self.__data:
-            self.__tag.album = self.__data['album']
-        if 'artist' in self.__data:
-            self.__tag.artist = self.__data['artist']
-        if 'title' in self.__data:
-            self.__tag.title = self.__data['title']
-        if 'discNumber' in self.__data:
-            self.__tag.disc_num = int(self.__data['discNumber'])
-        if 'trackNumber' in self.__data:
-            self.__tag.track_num = int(self.__data['trackNumber'])
         if 'genre' in self.__data:
             self.__tag.genre = self.__data['genre']
-        if 'albumArtist' in self.__data       and self.__data['albumArtist'] != 'genre' in self.__data:
-            self.__tag.album_artist = self.__data['albumArtist']
-        if 'year' in self.__data and int(self.__data['year']) != 0:
-            self.__tag.recording_date = self.__data['year']
 
-        if inspect.isclass(self.album) and self.album.art:
-            self.__tag.images.set(0x03, self.album.art, 'image/jpeg', u'Front cover')
-            print("GGGGGGGGGGGGGGOOOOOOOOOOOOOOOOOOOOTTTTTTTTTTTT ARRRRRRRRRRRRRRRRRRT ART")
 
+        if self.album_artist != 'genre':
+            self.__tag.album_artist = self.album_artist
+
+        if int(self.year) != 0:
+            self.__tag.recording_date = self.year
+
+        if 0 in self.albums and inspect.isclass(self.albums[0]) and self.albums[0].art:
+            mime_type = 'image/jpeg' #TODO: check mimetype
+            self.__tag.images.set(0x03, self.albums[0].art, mime_type, u'Front cover')
+        else:
+            print("# track has no art?")
+
+        # TODO: niggercode??
         tmpfd, tmpfile = tempfile.mkstemp()
         os.close(tmpfd)
         self.__tag.save(tmpfile, ID3_V2_4)
@@ -353,177 +456,151 @@ class Track(object):
         tmpfd.close()
         os.unlink(tmpfile)
 
-    @property
-    def id(self):
-        return self.__id
 
-    @property
-    def number(self):
-        #FISH
-        try:
-            return self.__number
-        except Exception:
-            print ("no track number")
-            return 0
-
-
-    @property
-    def title(self):
-        return self.__title.strip().replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
-
-
-    @property
-    def artist(self):
-        return self.__data['artist'].strip().replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
-
-    @property
-    def album(self):
-        return self.__album.strip().replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
-
-    @property
-    def year(self):
-        return self.__year
 
     def get_attr(self):
-        #print("get attr")
-        #print(self.__data)
-        #if self.__data['kind'] != "sj#track":
 
-
-        st = {}
-        st['st_mode'] = (S_IFREG | 0o444)
-        st['st_nlink'] = 1
-        #todo: need good data
-        st['st_ctime'] = st['st_mtime'] = st['st_atime'] = 0
+        st = {'st_mode': (S_IFREG | 0o777), 'st_nlink': 1, 'st_ctime': 0, 'st_mtime': 0, 'st_atime': 0}
+        # todo: need good data
 
         if 'bytes' in self.__data:
             st['st_size'] = int(self.__data['bytes'])
         elif 'estimatedSize' in self.__data:
             st['st_size'] = int(self.__data['estimatedSize'])
         else:
-            #fish
+            # fish
             if 'tagSize' in self.__data:
-                st['st_size'] = int(self.__data['tagSize']) #wtf??
+                st['st_size'] = int(self.__data['tagSize'])  # wtf??
             else:
                 print("####tagSize... wtf?")
                 st['st_size'] = 0
-                #t['st_mode'] = (S_IFREG | 0o000)
+                st['st_mode'] = (S_IFREG | 0o000)
 
         if 'creationTimestamp' in self.__data:
             st['st_ctime'] = st['st_mtime'] = int(self.__data['creationTimestamp']) / 1000000
+
         if 'recentTimestamp' in self.__data:
             st['st_atime'] = int(self.__data['recentTimestamp']) / 1000000
+
         return st
 
     def _open(self):
         print("#######file openned!")
         print(self.__data)
         pass
-        #self.__url = urllib.request.urlopen(self.__library.get_stream_url(self.id))
-        #self.__stream_cache += self.__url.read(64*1024) # Some caching
+        # self.__stream_url = urllib.request.urlopen(self.__library.get_stream_url(self.id))
+        # self.__stream_cache += self.__stream_url.read(64*1024) # Some caching
 
-    def read(self, offset, size):
+    def read(self, read_offset, read_chunk_size):
 
+        print("RUN READ: offset:" + str(read_offset) + "; size: " + str(read_chunk_size))
 
-        #костыль
-        estimatedSize_test = 10240
-
-        if 'estimatedSize' in self.__data:
-            estimatedSize_test = self.__data['estimatedSize']
-        else:
+        # костыль
+        estimated_size_test = 128*1024 # test 128kb def size
+        if 'estimatedSize' not in self.__data:
             print("ИНЖАЛИД ТРАК, НАХЕР ЕГО")
-            return;#TODO: skip invalid tracks
+            return  # TODO: skip invalid tracks
 
-        if not self.__tag: # Crating tag only when needed
+        if not self.__tag:  # Crating tag only when needed
             print("#### # # CRATE TAG")
             self.__gen_tag()
-            varTag = bytearray(self.__rendered_tag)
-            self.__stream_cache+= varTag
+            self.__stream_cache += bytearray(self.__rendered_tag)
 
-        if offset == 0 and not self.__url:
-            print('####### FIRST RUN TRACK')
+        tag_length = len(self.__rendered_tag)  # need?
+
+        if read_offset == 0 and not self.__stream_url:
+            # print('####### FIRST RUN TRACK')
+            self.__stream_url = urllib.request.urlopen(self.__library.get_stream_url(self.id))
+            self.__stream_cache += self.__stream_url.read(128 * 1024)  # 128kb?
+
+
+        if not self.__stream_url: # error while getting url
+            #TODO:check it
+            print("###Could't get stream url!")
             print(self)
             print(self.id)
-            print("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-            self.__url = urllib.request.urlopen(self.__library.get_stream_url(self.id))
-            self.__stream_cache+= self.__url.read(128*1024)#2 step up
-
-        if offset+size+5*4096 >= int(estimatedSize_test) and len(self.__stream_cache) < (int(estimatedSize_test)/2):
-            print("\033[032moffset:     \t%10.3fK\033[0m"% (offset/1024))
-            print("estSize:    \t%10.3fK"% (int(estimatedSize_test)/1024))
-            print("хрен тебе! читай последовательно!")
-            return ''
+            print("###")
+            return None
 
 
-        if not self.__url:
-            print("###not url")
-            return ''
+        #TODO: wtf it?
+        # если читаем конец файла (последние 4*4к) и трек на половину не загружен,
+        # то шлём к херам собачьим того кто читает
+        if read_offset + read_chunk_size >= int(self.__data['estimatedSize'])-5*4096 \
+                and len(self.__stream_cache)-tag_length < (int(self.__data['estimatedSize']) / 2
+        ):
+            print("\033[032moffset:     \t%10.3fK\033[0m" % (read_offset / 1024))
+            print("estSize:    \t%10.3fK" % (int(estimated_size_test) / 1024))
+            print("Хрен тебе! читай последовательно!")
+            return None
 
-        #TODO: need test slow connection
-        lenTag    = len(self.__rendered_tag)#need?
-        pos       = (offset + size)
+        # TODO: need test slow connection
+        pos = (read_offset + read_chunk_size)
 
+        # костыль
 
-        #костыль
-        '''
         print("\n############ debugPos")
-        print("lenTag:     \t%10.3fK"% (lenTag/1024))
+        print("tag_length: \t%10.3fK"% (tag_length/1024))
         print("#pos:       \t%10.3fK"% (pos/1024))
-        print("offset:     \t%10.3fK"% (offset/1024))
-        print("size:       \t%10.3fK"% (size/1024))
+        print("offset:     \t%10.3fK"% (read_offset / 1024))
+        print("size:       \t%10.3fK"% (read_chunk_size / 1024))
         print("estSize:    \t%10.3fK"% (int(self.__data['estimatedSize'])/1024))
-        '''
-        lenDown   = len(self.__stream_cache)-lenTag
-        diff      = lenDown-lenTag - (offset + size)
 
+        downloaded_stream_len = len(self.__stream_cache) - tag_length
+        diff = downloaded_stream_len - tag_length - (read_offset + read_chunk_size)
 
-        if lenDown-size*2 > offset+size:#TODO: move to while.... wtf is this???
+        if downloaded_stream_len - read_chunk_size * 2 > read_offset + read_chunk_size:  # TODO: move to while.... wtf is this???
             print("#from cache...")
         else:
             iter1 = 0
             while True:
-
                 print("\033[031m\t\t\tDownloading.. %d chunk\033[0m" % iter1)
-                iter1+=1
-                chunk = self.__url.read(size*10)#2 step up
-                self.__stream_cache += chunk#simply offset?#read all now?
-                lenDown   = len(self.__stream_cache)-lenTag
-                diff      = lenDown-lenTag - (offset + size)
-                print("chunk:      \t%10.3fK"% (len(chunk)/1024))
+                iter1 += 1
+                # TODO: check endless loop
+                chunk = self.__stream_url.read(read_chunk_size * 2)  # 2 step up
+                if not chunk:
+                    break #test it
+
+                self.__stream_cache += chunk  # simply offset?#read all now?
+                downloaded_stream_len = len(self.__stream_cache) - tag_length
+                diff = downloaded_stream_len - tag_length - (read_offset + read_chunk_size)
+                print("chunk:      \t%10.3fK" % (len(chunk) / 1024))
 
                 if diff > 0 or len(chunk) == 0:
-                    break;
+                    break
             print("\033[031m\t\t\tDownloading..  OK! %d chunks\033[0m" % iter1)
 
+        len_remain = (downloaded_stream_len + tag_length - read_offset - read_chunk_size)
+        # костыль
+        print("#remain:    \t%10.3fK" % (len_remain / 1024))
+        print("diff:       \t%10.3fK" % (diff / 1024))
+        print("#downloaded:\t%10.3fK" % (downloaded_stream_len / 1024))
 
-        lenRemain = (lenDown+lenTag - offset - size)
-        #костыль
-        print("#remain:    \t%10.3fK"% (lenRemain/1024))
-        print("diff:       \t%10.3fK"% (diff/1024))
-        print("#downloaded:\t%10.3fK"% (lenDown/1024))
+        if downloaded_stream_len > read_offset:  # TODO: neeed??
+            return self.__stream_cache[read_offset:read_offset + read_chunk_size]
 
-        if lenDown>offset:#TODO: neeed??
-            return self.__stream_cache[offset:offset + size]
-
-
-        return self.__stream_cache[offset:offset + size]#need len tas size????
+        return self.__stream_cache[read_offset:read_offset + read_chunk_size]  # need len tas size????
 
     def close(self):
-        #pass
-        '''
-        if self.__url:
+        # pass
+        """
+        if self.__stream_url:
             log.info("#######################################################killing url")
             self.__stream_cache = bytes()
 
             if self.__rendered_tag:
                 self.__stream_cache += bytearray(self.__rendered_tag)
 
-            self.__url.close()
-            self.__url = None
-        '''
+            self.__stream_url.close()
+            self.__stream_url = None
+        """
 
     def __str__(self):
-        return "{0.artist} - {0.title} - {0.number:02d}.mp3".format(self)
+        value2 = TRACK_FORMAT.format(self)
+        return value2
+
+
+
 
 class Playlist(object):
     """This class manages playlist information"""
@@ -534,84 +611,26 @@ class Playlist(object):
         self.__name = data['name']
         self.__tracks = {}
 
-
         for track in data['tracks']:
-            #track['track']['title'] = track['track']['title'].replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
-            trackId = track['trackId']
+
+            # TODO: WTF IS THIS SHIT?
+            track_id = track['trackId']
             try:
                 if 'track' in track:
-                    albumId = track['track']['albumId']
-                    if albumId not in self.__library.albums:
-                        self.__library.albums[albumId] = Album(self.__library, track['track'])
-                if trackId in self.__library.tracks:
-                    tr = self.__library.tracks[trackId]
+                    album_id = track['track']['albumId']
+                    if album_id not in self.__library.albums:
+                        self.__library.albums[album_id] = Album(self.__library, track['track'])
+                if track_id in self.__library.tracks:
+                    tr = self.__library.tracks[track_id]
                 else:
                     tr = Track(self.__library, track)
 
-                #FISH
-                print ('#1debug')
-                print (tr)
-                print ('#1end')
+                # FISH
+                print('#1debug')
+                print(tr)
+                print('#1end')
                 print(track)
-                '''
-    {
-       'kind': 'sj#playlistEntry',
-       'id': '1da3901e-c701-32e5-ab71-553f180f1d6d',
-       'clientId': '69fa3a44-dccd-4c01-8e89-d6a8890abbba',
-       'playlistId': '7399de6e-95f4-4151-bb18-7d70227177f5',
-       'absolutePosition': '01395944918664833489',
-       'trackId': 'T5vo6lssvi27dqbrswe3a3lrjki',
-       'creationTimestamp': '1511126534032141',
-       'lastModifiedTimestamp': '1511126534032141',
-       'deleted': False,
-       'source': '2',
-       'track': {
-           'kind': 'sj#track',
-           'title': 'Brave Shine (Full ver.)',
-           'artist': 'Sapphire',
-           'composer': '',
-           'album': 'Brave Shine (Fate/Stay Night: Unlimited Blade Works)',
-           'albumArtist': 'Sapphire',
-           'year': 2015,
-           'trackNumber': 1,
-           'genre': 'Pop',
-           'durationMillis': '230000',
-           'albumArtRef': [{
-               'kind': 'sj#imageRef',
-               'url': 'http://lh3.googleusercontent.com/szj2L71PZrr7ovfeGyo8ULjhMNeLA3BaeT37nxAFijbeipxxU-5FW2tn3CqPD1W3Os3uRNCW7A',
-               'aspectRatio': '1',
-               'autogen': False
-           }],
-           'artistArtRef': [{
-               'kind': 'sj#imageRef',
-               'url': 'http://lh3.googleusercontent.com/cl3SC__eFcXFxovDOrBDcMiRuCqqXPsdvj66iI_ppaa1uG-KIudwhZnQsj1wj3dHszAkrciZ',
-               'aspectRatio': '2',
-               'autogen': True
-           }, {
-               'kind': 'sj#imageRef',
-               'url': 'http://lh3.googleusercontent.com/vMFjfI99Og9sj5p5pDhga5X5ZlrT3R0vc57F9jf8GSPXmmD__z0G4kuNd1-fPNse7uAa7NmqJQ',
-               'aspectRatio': '1',
-               'autogen': True
-           }],
-           'playCount': 14,
-           'discNumber': 1,
-           'rating': '5',
-           'estimatedSize': '9229610',
-           'trackType': '7',
-           'storeId': 'T5vo6lssvi27dqbrswe3a3lrjki',
-           'albumId': 'Bps6iuywtvys4lncs44wam72uji',
-           'artistId': ['Awc7cvnop7mcshrnhiwso6vvsxm', 'Axijup2thuk3hf64lzw7v6jdune'],
-           'nid': '5vo6lssvi27dqbrswe3a3lrjki',
-           'trackAvailableForSubscription': True,
-           'trackAvailableForPurchase': True,
-           'albumAvailableForPurchase': False,
-           'explicitType': '2',
-           'lastRatingChangeTimestamp': '1503681621935000'
-       }
-   }
-                '''
-                #tr.album = tr.album.replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
-                #tr.title = tr.title.replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
+
                 self.__tracks[tr.title] = tr
             except:
                 log.exception("error: {}".format(track))
@@ -633,8 +652,10 @@ class Playlist(object):
     def __str__(self):
         return "{0.name}".format(self)
 
+
 class MusicLibrary(object):
     """This class reads information about your Google Play Music library"""
+
     def __init__(self, username=None, password=None,
                  true_file_size=False, verbose=0):
 
@@ -657,7 +678,7 @@ class MusicLibrary(object):
                 raise NoCredentialException(
                     'Config file is not protected. Please run: '
                     'chmod 600 %s' % cred_path)
-            self.config = ConfigParser.ConfigParser()
+            self.config = configparser.ConfigParser()
             self.config.read(cred_path)
             username = self.config.get('credentials', 'username')
             password = self.config.get('credentials', 'password')
@@ -699,10 +720,10 @@ class MusicLibrary(object):
         self.__playlists = {}
         self.__populate_library()
 
-    def get_stream_url(self, trackId):
+    def get_stream_url(self, track_id):
         print("URL:")
-        #print(self.__data)
-        url = self.api.get_stream_url(trackId)
+
+        url = self.api.get_stream_url(track_id)
         print(url)
         return url
 
@@ -712,90 +733,73 @@ class MusicLibrary(object):
         errors = 0
         for track in tracks:
             try:
-                log.debug('track = %s' % pp.pformat(track))
-
-                track['artist'] = track['artist'].replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
-
-                if 'artistId' not in track:
-                    track['artistId'] = track['artist'] # if we don't have an artistID, use the name as the id
-
-
-                if not track['artistId']:
-                    print ("#artistID is empty")
-                    continue
+                # make track
+                nTrack = Track(self, track)
+                if nTrack.id not in self.__tracks:
+                    self.__tracks[nTrack.id] = nTrack
                 else:
-                    artistId = track['artistId'][0]
-                    '''
-                    print ("#__populate_library_1")
-                    print ("\ttrack['artistId'][0]:")
-                    print (track['artistId'])
-                    print ("#end __populate_library_1")
-                    '''
+                    nTrack = self.__tracks[nTrack.id]
 
-                if artistId not in self.__artists:
-                    self.__artists[artistId] = Artist(self, track)
+                # make album
+                nAlbum = Album(self, track)
+                if nAlbum.id not in self.__albums:
+                    self.__albums[nAlbum.id] = nAlbum
+                else:
+                    nAlbum = self.__albums[nAlbum.id]
 
-                    #filter bad characters
-                    artistId2 = str(self.__artists[artistId]).strip().replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
 
-                    if not artistId2:
-                        artistId2 = "NO_ARTIST"#dupes? self.__artists_by_name[artistId2]+=???
 
-                    if artistId2[len(artistId2)-1] == ".":
-                        artistId2+= "_"
+                # TEST LOGIC. IF TRACK HAVE VALID ALBUM ARTIST, then ARTIST = albumArtist
+                if "albumArtist" in track and track["albumArtist"].strip() != "":
+                    # make arti
+                    nArtist = Artist(self, track, nTrack.album_artist_printable)
+                    if nTrack.album_artist_printable not in self.__artists_by_name:
+                        self.__artists_by_name[nTrack.album_artist_printable] = nArtist
+                    else:
+                        nArtist = self.__artists_by_name[nTrack.album_artist_printable]
+                else:
+                    # make artist
+                    nArtist = Artist(self, track)
+                    if nArtist.name_printable not in self.__artists_by_name:
+                        self.__artists_by_name[nArtist.name_printable] = nArtist
+                    else:
+                        nArtist = self.__artists_by_name[nArtist.name_printable]
 
-                    while artistId2 in self.__artists_by_name:
-                        artistId2+="_"
-                    #end filter
 
-                    self.__artists_by_name[artistId2] = self.__artists[artistId]
-                artist = self.__artists[artistId]
+                nTrack.add_album(nAlbum)
+                nTrack.add_artist(nArtist)
 
-                #does no work?
-                track['title'] = track['title'].replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_").replace(",", "_").replace("$", "_")
+                nAlbum.add_track(nTrack)
+                nAlbum.add_artist(nArtist)
 
-                if 'albumId' not in track:
-                    track['albumId'] = track['title']
+                nArtist.add_album(nAlbum)
 
-                albumId = track['albumId'] #ex: albumId(track['albumId']): Bvbzjsuvtuip7vtjigtt3pb7dk4,
+                '''
+                print("TRACK:")
+                pp.pprint(nTrack.__dict__)
+                print("ALBUM:")
+                pp.pprint(nAlbum.__dict__)
+                print("ARTIST:")
+                pp.pprint(nArtist.__dict__)
+                '''
 
-                if albumId not in self.__albums:
-                    self.__albums[albumId] = Album(self, track)#TODO: check characters in albums
-                    artist.add_album(self.__albums[albumId])
 
-                print("##########------")
-                print("########## albumId:" + albumId + ", track['title']: " + track['title'])
-                print("##########------")
-
-                self.__albums[albumId] = self.__albums[albumId]
-                album = self.__albums[albumId]
-                print("##########------")
-                print("########## album:")
-                print(album)
-                print("##########------")
-
-                self.__albums[albumId] = Album(self, track)#TODO: check characters in albums
-                track = Track(self, track)
-                print("##########------")
-                print("########## track:")
-                print(track)
-                print("##########------")
-                if track.id not in self.__tracks:
-                    self.__tracks[track.id] = track
-                    album.add_track(track)
             except:
-                log.exception("Error loading track: {}".format(track))
+                logging.error(traceback.format_exc())
+                log.exception("Error loading track: {}" + str(pp.pprint(track)))
                 errors += 1
+                raise
 
-        playlists = self.api.get_all_user_playlist_contents()
+        # playlists = self.api.get_all_user_playlist_contents()
+        playlists = ""
         for pl in playlists:
 
-            name = str(pl['name']).strip().replace("\\", "_").replace("/", "_").replace(":", "_").replace("*", "_").replace("'", "_").replace("\"", "_")
-            if name[len(name)-1] == ".":
-                name+= "_"
-            while name in self.__playlists:
-                name+="_"
+            name = format_to_path(pl['name'])
 
+            if name[len(name) - 1] == ".":
+                name += "_"
+            while name in self.__playlists:
+                name += "_"
 
             if name:
                 try:
@@ -804,10 +808,15 @@ class MusicLibrary(object):
                     log.exception("Error loading playlist: {}".format(pl))
                     errors += 1
 
-        log.info("Loaded {} tracks, {} albums, {} artists and {} playlists ({} errors).".format(len(self.__tracks), len(self.__albums), len(self.__artists), len(self.__playlists), errors))
+        log.info("Loaded {} tracks, {} albums, {} artists and {} playlists ({} errors).".format(len(self.__tracks),
+                                                                                                len(self.__albums),
+                                                                                                len(self.__artists),
+                                                                                                len(self.__playlists),
+                                                                                                errors))
 
     def cleanup(self):
         pass
+
 
 class GMusicFS(LoggingMixIn, Operations):
     """Google Music Filesystem"""
@@ -818,89 +827,128 @@ class GMusicFS(LoggingMixIn, Operations):
 
         artist = '/artists/(?P<artist>[^/]+)'
 
-        self.artist_dir = re.compile('^{artist}$'.format(
-            artist=artist))
+        self.artist_dir = re.compile('^{artist}$'.format(artist=artist))
+
         self.artist_album_dir = re.compile('^{artist}/{album}$'.format(
-            artist=artist, album=ALBUM_REGEX))
+                artist=artist, album=ALBUM_REGEX
+            )
+        )
         self.artist_album_track = re.compile('^{artist}/{album}/{track}$'.format(
-            artist=artist, album=ALBUM_REGEX, track=TRACK_REGEX))
+                artist=artist, album=ALBUM_REGEX, track=TRACK_REGEX
+            )
+        )
 
         self.playlist_dir = re.compile('^/playlists/(?P<playlist>[^/]+)$')
-        #self.playlist_track = re.compile('^/playlists/(?P<playlist>[^/]+)/(?P<track>[^/]+\.mp3)$')
-        #Rena Uehara - Todokanai Koi - 13 .mp3
-        #self.playlist_track = re.compile('^/playlists/(?P<playlist>[^/]+)/(?P<artist> - (?P<title>.*) - (?P<number>[0-9]+)\.mp3)$')
-        #self.playlist_track = re.compile('^/playlists/(?P<playlist>[^/]+)/(?P<track>(?P<number>[0-9]+) - (?P<title>.*)\.mp3)$')
-        PLAYLIST_REGEX = '^/playlists/(?P<playlist>[^/]+)/'+TRACK_REGEX+'$'
+
+        PLAYLIST_REGEX = '^/playlists/(?P<playlist>[^/]+)/' + TRACK_REGEX + '$'
         self.playlist_track = re.compile(PLAYLIST_REGEX)
         print(PLAYLIST_REGEX)
-
 
         self.__opened_tracks = {}  # path -> urllib2_obj
 
         # Login to Google Play Music and parse the tracks:
-        self.library = MusicLibrary(username, password,
-                                    true_file_size=true_file_size, verbose=verbose)
+        self.library = MusicLibrary(username, password, true_file_size=true_file_size, verbose=verbose)
         log.info("Filesystem ready : %s" % path)
 
     def cleanup(self):
         self.library.cleanup()
 
     def getattr(self, path, fh=None):
+        print(path)
         """Get information about a file or directory"""
-        artist_dir_m = self.artist_dir.match(path)
-        artist_album_dir_m = self.artist_album_dir.match(path)
-        artist_album_track_m = self.artist_album_track.match(path)
-        playlist_dir_m = self.playlist_dir.match(path)
-        playlist_track_m = self.playlist_track.match(path)
+        artist_dir_m           = self.artist_dir.match(path)
+        artist_album_dir_m     = self.artist_album_dir.match(path)
+        artist_album_track_m   = self.artist_album_track.match(path)
+        playlist_dir_m         = self.playlist_dir.match(path)
+        playlist_track_m       = self.playlist_track.match(path)
 
         # Default to a directory
         st = {
             'st_mode': (S_IFDIR | 0o755),
-            'st_nlink': 2}
+            'st_nlink': 2
+        }
         date = 0  # Make the date really old, so that cp -u works correctly.
         st['st_ctime'] = st['st_mtime'] = st['st_atime'] = date
 
-        parts = "";
+        parts = ""
         if path == '/':
+            print("path /")
             pass
+
         elif path == '/artists':
+            print("path /artists/")
             pass
+
         elif path == '/playlists':
+            print("path /playlists/")
             pass
+
         elif artist_dir_m:
+            # print("path \"artist_dir_m\"")
             pass
+
         elif artist_album_dir_m:
+
+            print("path \"artist_album_dir_m\"")
+
             parts = artist_album_dir_m.groupdict()
             print("parts artist_album_dir_m:")
             print(parts)
             artist = self.library.artists_by_name[parts['artist']]
+            print("==================")
+            print(artist)
+            print("==================")
+
+            if parts['album'] not in artist.albums:
+                raise FuseOSError(ENOENT)
+                return st
+
             album = artist.albums[parts['album']]
             st['st_size'] = len(artist.albums)
-            print("############### I ADD DIRECTORY SIZE")
+
+            print(album)
+            print("==================")
+            print("############### I ADD DIRECTORY SIZE ")
 
         elif artist_album_track_m:
+
+            print("path \"artist_album_track_m\"")
+
             parts = artist_album_track_m.groupdict()
             print("parts artist_album_track_m:")
             print(parts)
             artist = self.library.artists_by_name[parts['artist']]
             album = artist.albums[parts['album']]
-            track = album.tracks[parts['title']]
+            # pp.pprint(album.tracks)
+            # pp.pprint(album)
+            title2 = parts['disc'] + "-" + parts['number'] + " - " + parts['trartist'] + " - " + parts['title'] + ".mp3"
+            track = album.tracks[title2]
+
+            print("t==================")
+            print(album)
+            print(track)
             print("############### artist_album_track_m I RETURN TRACK ATTR!")
             return track.get_attr()
 
         elif playlist_dir_m:
+
+            print("path \"playlist_dir_m\"")
+
             pass
         elif playlist_track_m:
+
+            print("path \"playlist_track_m\"")
+
             parts = playlist_track_m.groupdict()
             print("parts playlist_track_m:")
             print(parts)
             playlist = self.library.playlists[parts['playlist']]
-            #TODO: revert checking
-            #if parts['title'] in playlist.tracks:
+            # TODO: revert checking
+            # if parts['title'] in playlist.tracks:
             if parts['title']:
                 print("############### playlist_track_m I RETURN ATTR!")
                 track = playlist.tracks[parts['title']]
-                #print(playlist.tracks)
+                # print(playlist.tracks)
                 return track.get_attr()
             else:
                 print("############### playlist_track_m I RETURN XYU (st)")
@@ -923,7 +971,8 @@ class GMusicFS(LoggingMixIn, Operations):
             parts = artist_album_track_m.groupdict()
             artist = self.library.artists_by_name[parts['artist']]
             album = artist.albums[parts['album']]
-            track = album.tracks[parts['title']]
+            title2 = parts['disc'] + "-" + parts['number'] + " - " + parts['trartist'] + " - " + parts['title'] + ".mp3" #todo: TEST
+            track = album.tracks[title2]
         elif playlist_track_m:
             parts = playlist_track_m.groupdict()
             playlist = self.library.playlists[parts['playlist']]
@@ -931,6 +980,7 @@ class GMusicFS(LoggingMixIn, Operations):
         else:
             RuntimeError('unexpected opening of path: %r' % path)
 
+        # TODO: check it
         key = path + "-" + str(fh)
         if not fh in self.__opened_tracks:
             self.__opened_tracks[key] = [0, track]
@@ -958,8 +1008,7 @@ class GMusicFS(LoggingMixIn, Operations):
 
         return track[1].read(offset, size)
 
-
-    #TODO: add file sizes... maybe add radio?
+    # TODO: add file sizes... maybe add radio?
     def readdir(self, path, fh):
         artist_dir_m = self.artist_dir.match(path)
         artist_album_dir_m = self.artist_album_dir.match(path)
@@ -968,22 +1017,44 @@ class GMusicFS(LoggingMixIn, Operations):
         if path == '/':
             return ['.', '..', 'artists', 'playlists']
 
-        elif path == '/artists':#TODO: neeed filter bad characters
+        elif path == '/artists':  # TODO: need filter bad characters?
             listTMP = list(self.library.artists_by_name.keys())
-            print(listTMP)#TODO: remove
-            listTMP = ['.','..'] + listTMP
-            return  listTMP
+            print(listTMP)  # TODO: remove
+            listTMP = ['.', '..'] + listTMP
+            return listTMP
 
         elif path == '/playlists':
-            playlistTMP = ['.','..'] + list(self.library.playlists.keys())
-            print(playlistTMP)#TODO: remove
-            return  playlistTMP
+            playlistTMP = ['.', '..'] + list(self.library.playlists.keys())
+            print(playlistTMP)  # TODO: remove
+            return playlistTMP
+
+        elif path == '/radio':
+            radioTMP = ['.', '..']  # + list(self.library.radio.keys())
+            print(radioTMP)  # TODO: remove
+            return radioTMP
 
         elif artist_dir_m:
+            print("artist_dir_m")
             # Artist directory, lists albums.
             parts = artist_dir_m.groupdict()
+
+            print("==========================parts")
+            print(parts)
+
             artist = self.library.artists_by_name[parts['artist']]
-            return ['.', '..'] + [str(album) for album in artist.albums.values()]
+
+            print("========================== artist")
+            print(artist)
+
+            print("========================== artist.albums")
+            print(artist.albums)
+
+            print("========================== artist.albums.values")
+            values = artist.albums.values()
+            print(values)
+            tmpList = [str(album) for album in artist.albums.values()]
+            print(tmpList)
+            return ['.', '..'] + tmpList
 
         elif artist_album_dir_m:
             # Album directory, lists tracks.
@@ -1025,10 +1096,10 @@ def main():
     parser.add_argument('-vv', '--veryverbose', help='Be very verbose',
                         action='store_true', dest='veryverbose')
     parser.add_argument('-t', '--truefilesize', help='Report true filesizes'
-                        ' (slower directory reads)',
+                                                     ' (slower directory reads)',
                         action='store_true', dest='true_file_size')
     parser.add_argument('--allow_other', help='Allow all system users access to files'
-                        ' (Requires user_allow_other set in /etc/fuse.conf)',
+                                              ' (Requires user_allow_other set in /etc/fuse.conf)',
                         action='store_true', dest='allow_other')
     parser.add_argument('--allow_root', help='Allow root access to files',
                         action='store_true', dest='allow_root')
@@ -1062,13 +1133,15 @@ def main():
         logging.getLogger('fuse').setLevel(logging.WARNING)
         logging.getLogger('requests.packages.urllib3').setLevel(logging.WARNING)
         verbosity = 0
-
     fs = GMusicFS(mountpoint, true_file_size=args.true_file_size, verbose=verbosity, lowercase=args.lowercase)
+    # quit()
     try:
         FUSE(fs, mountpoint, foreground=args.foreground,
-                    ro=True, nothreads=True, allow_other=args.allow_other, allow_root=args.allow_root, uid=args.uid, gid=args.gid)
+             ro=False, nothreads=False, allow_other=args.allow_other, allow_root=args.allow_root, uid=args.uid,
+             gid=args.gid)
     finally:
         fs.cleanup()
+
 
 if __name__ == '__main__':
     main()

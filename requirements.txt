@@ -1,4 +1,5 @@
 fuse
+python-magic
 fusepy
 gmusicapi
 eyed3

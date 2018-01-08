@@ -659,7 +659,7 @@ class MusicLibrary(object):
     def __login_and_setup(self, username=None, password=None):
         # If credentials are not specified, get them from $HOME/.gmusicfs
         if not username or not password:
-            cred_path = os.path.join(os.path.expanduser('~'), '.gmusicfs/.gmusicfs')
+            cred_path = os.path.join(os.path.expanduser('~'), '.gmusicfs/credentials')
             if not os.path.isfile(cred_path):
                 raise NoCredentialException(
                     'No username/password was specified. No config file could '

@@ -321,7 +321,7 @@ class Track(object):
         self.__rendered_tag = bytes()
         self.__tag          = ""
 
-        # TODO: надо разобраться где это юзается
+        # TODO: I need to figure out where this is used
         # track_id
         if 'track' in data:
             self.__id = data['trackId']
@@ -484,10 +484,10 @@ class Track(object):
 
         print("RUN READ: offset:" + str(read_offset) + "; size: " + str(read_chunk_size))
 
-        # костыль
+        # Crutch
         estimated_size_test = 128*1024 # test 128kb def size
         if 'estimatedSize' not in self.__data:
-            print("ИНЖАЛИД ТРАК, НАХЕР ЕГО")
+            print("INVALID TRACK")
             return  # TODO: skip invalid tracks
 
         if not self.__tag:  # Crating tag only when needed WTAF
@@ -513,20 +513,20 @@ class Track(object):
             print("###")
             #return None
 
-        # если читаем конец файла (последние 4*4к) и трек на половину не загружен,
-        # то шлём к херам собачьим того кто читает
+        # If we read the end of the file (the last 4 * 4k) and the track is not half loaded,
+        # then we send to the hears of the one who reads
         if read_offset + read_chunk_size >= int(self.__data['estimatedSize'])-5*4096 \
                 and len(self.__stream_cache)-tag_length < (int(self.__data['estimatedSize']) / 2
         ):
             print("\033[032moffset:     \t%10.3fK\033[0m" % (read_offset / 1024))
             print("estSize:    \t%10.3fK" % (int(self.__data['estimatedSize'])/1024))
-            print("Хрен тебе! читай последовательно!")
+            print("Read Consistently!")
             return None
 
         # TODO: need test slow connection
         pos = (read_offset + read_chunk_size)
 
-        # костыль
+        # Crutch
 
         print("\n############ debugPos")
         print("tag_length: \t%10.3fK" % (tag_length/1024))
@@ -559,7 +559,7 @@ class Track(object):
             print("\033[031m\t\t\tDownloading..  OK! %d chunks\033[0m" % iter1)
 
         len_remain = (downloaded_stream_len + tag_length - read_offset - read_chunk_size)
-        # костыль
+        # Crutch
         print("#remain:    \t%10.3fK" % (len_remain / 1024))
         print("diff:       \t%10.3fK" % (diff / 1024))
         print("#downloaded:\t%10.3fK" % (downloaded_stream_len / 1024))
